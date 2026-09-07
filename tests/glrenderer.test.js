@@ -26,6 +26,7 @@ import {
   layerBaseZ,
   lidRotationX,
   lidTiltCompensationDeg,
+  laptopDeckPitchDeg,
   poseToEuler,
   remapShapeUVs,
   screenCornerRadius,
@@ -213,6 +214,37 @@ describe('lidTiltCompensationDeg', () => {
   it('is a pure function of lidAngle alone, unaffected by pose rotation', () => {
     expect(lidTiltCompensationDeg(110)).toBe(20)
     expect(lidTiltCompensationDeg(130)).toBe(40)
+  })
+})
+
+// The laptop-only hero pitch, see glRenderer.js's own doc comment for why it
+// has to fade to exactly 0 at a dead-frontal pose (rotateX 0, rotateY 0): the
+// reference look's ending settles there, and any residual tilt would break
+// the exact screen-fit ending.
+describe('laptopDeckPitchDeg', () => {
+  it('is exactly zero at a dead-frontal pose', () => {
+    expect(laptopDeckPitchDeg(0, 0)).toBe(0)
+  })
+
+  it('is positive once the pose tilts away from frontal', () => {
+    expect(laptopDeckPitchDeg(4, 0)).toBeGreaterThan(0)
+    expect(laptopDeckPitchDeg(0, -10)).toBeGreaterThan(0)
+  })
+
+  it('saturates at a fixed magnitude for a large tilt, unbounded further growth', () => {
+    const atRamp = laptopDeckPitchDeg(6, 0)
+    const wellPast = laptopDeckPitchDeg(30, 0)
+    expect(wellPast).toBeCloseTo(atRamp)
+  })
+
+  it('is continuous: no jump between a tiny tilt and exactly zero', () => {
+    const tiny = laptopDeckPitchDeg(0.01, 0)
+    expect(tiny).toBeGreaterThan(0)
+    expect(tiny).toBeLessThan(0.1)
+  })
+
+  it('takes the larger tilt magnitude of rotateX/rotateY', () => {
+    expect(laptopDeckPitchDeg(1, -5)).toBe(laptopDeckPitchDeg(5, 0))
   })
 })
 

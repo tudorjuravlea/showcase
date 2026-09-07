@@ -10,6 +10,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { DEVICES } from '../../core/devices.js'
 import { glBezelScale, glLayout, screenAspect, LAPTOP_BASE_HEIGHT } from './layout.js'
 import { composeChromeTexture } from './chromeTexture.js'
+import { composeKeyboardTexture } from './keyboardTexture.js'
 
 // The pure, THREE-free device-layout math lives in ./layout.js so the Node
 // CLI (bin/showcase.mjs) can use it without importing three. Re-exported here
@@ -98,6 +99,18 @@ export function glBandChamfer(deviceName) {
   if (!GL_BODY_THICKNESS_MULTIPLIER[deviceName]) return 0
   return glBodyThickness(deviceName) * GL_BAND_CHAMFER_FRACTION
 }
+
+// Laptop-only, GL-side: the keyboard-deck's own depth, i.e. how far it
+// extends toward the viewer past the hinge (spec: "a substantial aluminum
+// slab... extending toward the viewer", not the previous thin strip).
+// Deliberately independent of LAPTOP_BASE_HEIGHT (layout.js), which only
+// carves the lid/screen split that the hinge position, screen aspect and the
+// frontal screen-fit ending all depend on (see screenPlaneLayout/screenAspect);
+// reusing it here would either leave the deck a sliver or shrink the screen
+// to grow it. 110 px-ish units is ~13% of the device's own width (820),
+// enough to read as a real keyboard tray once properly folded (see
+// buildLaptopDevice's baseRotor) without competing with the screen for frame.
+const GL_LAPTOP_DECK_DEPTH = 110
 
 // Side buttons (trait 3): two volume pills and a longer power button standing
 // slightly proud of the band, in the upper half of the sides. Phone/tablet
@@ -344,6 +357,32 @@ export function lidTiltCompensationDeg(lidAngle) {
   return lidAngle - 90
 }
 
+// Laptop-only hero pitch (spec: "hero angle... during non-ending beats the
+// camera should see some of the deck"): an extra downward tilt so mid-clip
+// beats reveal the keyboard deck, applied at the same device-group rotation
+// lidTiltCompensationDeg feeds (see applyPose()/distanceBounds() below)
+// rather than in src/showcase/looks.js, which stays device-agnostic. Ramps in
+// with the pose's OWN tilt magnitude, continuously rather than as a hard
+// on/off switch, so it fades to EXACTLY 0 as a look eases to dead-frontal
+// (the reference look's ending: rotateX 0, rotateY 0). That leaves the
+// screen-fit ending (see lidTiltCompensationDeg) byte-for-byte unaffected
+// instead of landing on it with a residual tilt or a one-frame snap right at
+// the cut.
+const LAPTOP_DECK_PITCH_DEG = 8
+const LAPTOP_DECK_PITCH_RAMP_DEG = 6
+
+/**
+ * @param {number} rotateX - pose.rotateX, degrees (CSS/pose convention)
+ * @param {number} rotateY - pose.rotateY, degrees
+ * @returns {number} degrees, same sign convention/units as
+ *   lidTiltCompensationDeg. Exactly 0 at a dead-frontal pose, ramping up to
+ *   LAPTOP_DECK_PITCH_DEG within LAPTOP_DECK_PITCH_RAMP_DEG of it.
+ */
+export function laptopDeckPitchDeg(rotateX, rotateY) {
+  const tilt = Math.max(Math.abs(rotateX || 0), Math.abs(rotateY || 0))
+  return LAPTOP_DECK_PITCH_DEG * Math.min(1, tilt / LAPTOP_DECK_PITCH_RAMP_DEG)
+}
+
 /**
  * World-space (scene-unit) rect of the rendered screen plane at a device's
  * default, untransformed pose — the anchor `cameraLayout()` aims UV targets
@@ -584,7 +623,10 @@ export function distanceBounds({
   // for the uncompensated (still-reclined) screen while the render shows the
   // compensated (frontal-at-rotateX-0) one.
   const lidAngle = spec.lidAngle != null ? (p.lidAngle ?? spec.lidAngle) : null
-  const eulerX = lidAngle != null ? euler.x + THREE.MathUtils.degToRad(lidTiltCompensationDeg(lidAngle)) : euler.x
+  const eulerX =
+    lidAngle != null
+      ? euler.x + THREE.MathUtils.degToRad(lidTiltCompensationDeg(lidAngle) + laptopDeckPitchDeg(p.rotateX, p.rotateY))
+      : euler.x
   _boundsEuler.set(eulerX, euler.y, euler.z)
 
   if (lidAngle != null) {
@@ -627,6 +669,23 @@ export function distanceBounds({
           Math.abs(_boundsVec.x + tx - screen.offsetX) / kx - (screen.offsetZ - (_boundsVec.z + tz)) / baseDistance
         if (need > fitRaw) fitRaw = need
       }
+    }
+  }
+  // Laptop only: the base deck (buildLaptopDevice's baseRotor) extends toward
+  // the viewer by GL_LAPTOP_DECK_DEPTH past the hinge, far more than the thin
+  // flat-box Z range above models (that range is the LID's own closed
+  // thickness, not the opened deck). Test its own near corners (X = +-halfW,
+  // at the deck's full forward reach) the same way, so a rotation/pose that
+  // widens fit for the rest of the device widens it for the deck too. Y
+  // doesn't matter here: `need` is a horizontal-only term.
+  if (lidAngle != null) {
+    const hingeYLocal = -worldH / 2 + LAPTOP_BASE_HEIGHT * UNIT
+    const deckNearZ = GL_LAPTOP_DECK_DEPTH * UNIT
+    for (const sx of [-1, 1]) {
+      _boundsVec.set(sx * halfW, hingeYLocal, deckNearZ).multiplyScalar(scale).applyEuler(_boundsEuler)
+      const need =
+        Math.abs(_boundsVec.x + tx - screen.offsetX) / kx - (screen.offsetZ - (_boundsVec.z + tz)) / baseDistance
+      if (need > fitRaw) fitRaw = need
     }
   }
   const fit = fitRaw * (1 + FIT_MARGIN)
@@ -1034,8 +1093,15 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   // z range grows back by exactly the bevel on each end), so the slab still
   // spans [frontOffset - thickness, frontOffset] and the front-face pinning
   // above — which layerBaseZ's front-face ordering depends on — is unchanged.
-  function buildFrameMesh(layout, color, thickness, { finish = null, frontOffset = thickness / 2, chamfer = 0 } = {}) {
-    const shape = roundedRectShape(layout.body.width * UNIT, layout.body.height * UNIT, layout.body.radius * UNIT)
+  function buildFrameMesh(
+    layout,
+    color,
+    thickness,
+    { finish = null, frontOffset = thickness / 2, chamfer = 0, capTexture = null } = {}
+  ) {
+    const width = layout.body.width * UNIT
+    const height = layout.body.height * UNIT
+    const shape = roundedRectShape(width, height, layout.body.radius * UNIT)
     const bevel = Math.max(0, Math.min(chamfer, thickness / 4))
     const geometry = track(
       new THREE.ExtrudeGeometry(shape, {
@@ -1051,8 +1117,30 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
       })
     )
     geometry.translate(0, 0, frontOffset - thickness + bevel)
-    const material = finish ? [bodyMaterial(color), bandMaterial(finish)] : bodyMaterial(color)
+    // capTexture (the laptop deck's procedural keyboard texture, see
+    // buildDeckTexture): ExtrudeGeometry's default cap UVs are raw shape-space
+    // vertex coordinates, the same convention ShapeGeometry uses (see
+    // remapShapeUVs' own doc comment), so the same remap normalizes them to
+    // 0..1 here. It also touches the wall UVs, harmlessly: the band material
+    // below never samples a map.
+    if (capTexture) remapShapeUVs(geometry, width, height)
+    const capMaterial = capTexture
+      ? track(new THREE.MeshPhysicalMaterial({ map: capTexture, metalness: 0.1, roughness: 0.85 }))
+      : bodyMaterial(color)
+    const material = finish ? [capMaterial, bandMaterial(finish)] : capMaterial
     return new THREE.Mesh(geometry, material)
+  }
+
+  // Laptop base only: the procedural keyboard/trackpad texture applied to the
+  // deck's top-facing cap via buildFrameMesh's capTexture (see
+  // buildLaptopDevice). width/height match the deck's own shape (device width
+  // x GL_LAPTOP_DECK_DEPTH) so remapShapeUVs' 0..1 mapping lines up with the
+  // canvas 1:1: same aspect in, same aspect out, no stretch.
+  function buildDeckTexture(width, height) {
+    const canvas = composeKeyboardTexture(width, height)
+    const texture = track(new THREE.CanvasTexture(canvas))
+    texture.colorSpace = THREE.SRGBColorSpace
+    return texture
   }
 
   // Volume/power buttons standing proud of the side band (see sideButtonSpecs
@@ -1356,10 +1444,15 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
 
     const baseHeight = LAPTOP_BASE_HEIGHT
     const lidHeight = layout.height - baseHeight
-    const baseLayout = {
+    const hingeY = -(layout.height * UNIT) / 2 + baseHeight * UNIT
+    // The deck's own visual depth is independent of baseHeight, see
+    // GL_LAPTOP_DECK_DEPTH's doc comment for why reusing baseHeight here would
+    // either leave the deck a sliver or shrink the screen to grow it.
+    const deckDepth = GL_LAPTOP_DECK_DEPTH
+    const deckLayout = {
       width: layout.width,
-      height: baseHeight,
-      body: { width: layout.width, height: baseHeight, radius: layout.body.radius },
+      height: deckDepth,
+      body: { width: layout.width, height: deckDepth, radius: layout.body.radius },
     }
     const lidWidth = layout.width - device.bezel.left - device.bezel.right
     const lidScreenLayout = {
@@ -1384,18 +1477,42 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
       return { group: layerGroup, index, baseZ }
     }
 
-    const baseGroup = new THREE.Group()
-    const shell = buildFrameMesh(baseLayout, 0x1c1c1e, BODY_THICKNESS)
-    const body = buildFrameMesh(baseLayout, 0x2c2d30, glBodyThickness(device.name), {
+    const deckTexture = buildDeckTexture(deckLayout.width, deckLayout.height)
+    const shell = buildFrameMesh(deckLayout, 0x1c1c1e, BODY_THICKNESS)
+    const body = buildFrameMesh(deckLayout, 0x2c2d30, glBodyThickness(device.name), {
       finish: resolveFrameFinish(sceneSpec.style.frame),
       frontOffset: (BODY_THICKNESS * 0.9) / 2,
+      capTexture: deckTexture,
     })
     const shellLayer = layerGroupFor(shell, 0)
     const bodyLayer = layerGroupFor(body, 1)
+    const baseGroup = new THREE.Group()
     baseGroup.add(shellLayer.group, bodyLayer.group)
-    baseGroup.position.y = -(layout.height * UNIT) / 2 + (baseHeight * UNIT) / 2
+    // Hang the deck below the hinge in its OWN local frame, pre-fold: the
+    // centered shape spans [-deckDepth/2, deckDepth/2], so shifting by
+    // -deckDepth/2 puts its far (hinge) edge exactly at local Y 0, the point
+    // baseRotor below pivots on.
+    baseGroup.position.y = -(deckDepth * UNIT) / 2
 
-    const hingeY = -(layout.height * UNIT) / 2 + baseHeight * UNIT
+    // baseRotor: the fixed fold that turns the deck (built, like every other
+    // buildFrameMesh box, screen-facing) into a horizontal slab, a static
+    // -90deg about X, matching the CSS renderer's own rotateX(90deg) fold
+    // (device.css's .ma-laptop-base), negated for THREE's Y-up axis the same
+    // way lidRotationX negates the lid's own tilt. A local point (x, y, z)
+    // lands at (x, z, -y) relative to the pivot: local X (device width) is
+    // untouched; local Z (the thin extrusion thickness) becomes world Y (the
+    // deck's vertical rise); local Y (deckDepth, negative below the hinge)
+    // becomes world Z, positive, extending toward the viewer, per spec. The
+    // shape's own front cap (larger local Z) ends up at the top of that Y
+    // range, so it's the face buildDeckTexture paints; the shape's "bottom"
+    // wall (local y = -deckDepth, the far end from the hinge) ends up at the
+    // largest world Z, the near, front-lip edge. Fixed, unlike the lid: only
+    // the lid opens/closes.
+    const baseRotor = new THREE.Group()
+    baseRotor.rotation.x = -Math.PI / 2
+    baseRotor.position.y = hingeY
+    baseRotor.add(baseGroup)
+
     const lid = new THREE.Group()
     const screenBuild = buildScreenMesh(lidScreenLayout, sceneSpec.content, screenPassthroughColor())
     const screen = screenBuild.mesh
@@ -1414,7 +1531,7 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
 
     const layerGroupSpecs = [shellLayer, bodyLayer, screenLayer, glassLayer]
 
-    group.add(baseGroup, lid)
+    group.add(baseRotor, lid)
 
     if (sceneSpec.style.glow) group.add(buildGlowPlane(layout))
 
@@ -1542,7 +1659,11 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     if (!deviceGroup) return
 
     const euler = poseToEuler(pose)
-    if (lidGroup) euler.x += THREE.MathUtils.degToRad(lidTiltCompensationDeg(pose.lidAngle))
+    if (lidGroup) {
+      euler.x += THREE.MathUtils.degToRad(
+        lidTiltCompensationDeg(pose.lidAngle) + laptopDeckPitchDeg(pose.rotateX, pose.rotateY)
+      )
+    }
 
     let posX = pose.translateX * UNIT
     let posY = -pose.translateY * UNIT
