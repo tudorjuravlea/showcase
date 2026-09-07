@@ -27,6 +27,7 @@ import {
   lidRotationX,
   lidTiltCompensationDeg,
   laptopDeckPitchDeg,
+  motionDampingFactor,
   poseToEuler,
   remapShapeUVs,
   screenCornerRadius,
@@ -245,6 +246,28 @@ describe('laptopDeckPitchDeg', () => {
 
   it('takes the larger tilt magnitude of rotateX/rotateY', () => {
     expect(laptopDeckPitchDeg(1, -5)).toBe(laptopDeckPitchDeg(5, 0))
+  })
+})
+
+// Device-scoped motion damping (spec: "a lot less movement of the laptop
+// compared to the smartphone mockup"). See glRenderer.js's own doc comment
+// on why this is applied only to the pose's own rotation/translation, never
+// to laptopDeckPitchDeg's ramp or to distanceBounds()'s camera math.
+describe('motionDampingFactor', () => {
+  it('damps the laptop down into the spec\'s 0.35-0.45 range', () => {
+    const factor = motionDampingFactor('laptop')
+    expect(factor).toBeGreaterThanOrEqual(0.35)
+    expect(factor).toBeLessThanOrEqual(0.45)
+  })
+
+  it('is exactly 1 (untouched) for every other device', () => {
+    for (const name of ['phone', 'tablet', 'browser']) {
+      expect(motionDampingFactor(name)).toBe(1)
+    }
+  })
+
+  it('is exactly 1 for an unlisted/unknown device name', () => {
+    expect(motionDampingFactor('not-a-device')).toBe(1)
   })
 })
 
@@ -485,8 +508,14 @@ describe('glBodyThickness', () => {
     expect(browser).toBeCloseTo(phone)
   })
 
-  it('laptop is untouched (out of scope for this pass)', () => {
-    expect(glBodyThickness('laptop')).toBeCloseTo(0.06 * 0.9)
+  // Laptop gets the same treatment as the handheld devices (a thick,
+  // chamfered polished rim, see glBandChamfer below), just a smaller
+  // multiplier: a laptop chassis is proportionally thinner than a phone's
+  // edge band.
+  it('laptop is thickened too, but by a smaller multiplier than the handhelds', () => {
+    const laptop = glBodyThickness('laptop')
+    expect(laptop).toBeGreaterThan(0.06 * 0.9)
+    expect(laptop).toBeLessThan(glBodyThickness('phone'))
   })
 
   it('an unlisted device name falls back to the untouched depth', () => {
@@ -507,15 +536,22 @@ describe('glBandChamfer', () => {
     // The chamfer insets the front cap by exactly its own depth per side; the
     // screen plane floating in front of it is inset by the GL-scaled bezel. If
     // the chamfer were the wider of the two, the screen would overhang the cap.
-    for (const name of ['phone', 'tablet']) {
+    for (const name of ['phone', 'tablet', 'laptop']) {
       const device = DEVICES[name]
       const bezel = Math.min(device.bezel.left, device.bezel.right, device.bezel.top, device.bezel.bottom)
       expect(glBandChamfer(name)).toBeLessThan(bezel * glBezelScale(name) * 0.01)
     }
   })
 
-  it('is zero for a device whose body was never thickened (laptop keeps its sharp extrusion)', () => {
-    expect(glBandChamfer('laptop')).toBe(0)
+  // Laptop now shares the handheld devices' band treatment (see
+  // glBodyThickness above): its chamfer is positive too, just proportionally
+  // narrower (a smaller body thickness feeds the same GL_BAND_CHAMFER_FRACTION).
+  it('is positive for laptop too, narrower than the handhelds\'', () => {
+    expect(glBandChamfer('laptop')).toBeGreaterThan(0)
+    expect(glBandChamfer('laptop')).toBeLessThan(glBandChamfer('phone'))
+  })
+
+  it('is zero for a device whose body was never thickened', () => {
     expect(glBandChamfer('not-a-device')).toBe(0)
   })
 })

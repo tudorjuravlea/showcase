@@ -57,10 +57,7 @@ export function resolveFrameFinish(name) {
 // buildBodyBox, whose wall faces this mirrors) reads as thin plastic at its
 // shared-with-CSS thickness. The reference hardware's side band is much
 // thicker relative to the device footprint — this multiplies the GL body's
-// extrusion depth per device, uniformly for phone/tablet/browser (it's the only device the
-// reference recording actually shows). Laptop is intentionally excluded
-// (multiplier 1): out of scope for this pass, and its hinge math assumes
-// the original geometry.
+// extrusion depth per device.
 //
 // 5.6 is a measured proportion, not a taste knob: a real phone's side band is
 // ~11% of its width (iPhone 16 Pro, 8.25mm over 71.5mm), which is what makes a
@@ -69,7 +66,15 @@ export function resolveFrameFinish(name) {
 // 0.054 * 5.6 = 0.302 plus the 0.053 the screen/glass planes float ahead of
 // the body's front cap — 0.355 all told, 11.8% of the width. At the old 2.6
 // (4.7% of width, less than half a real phone) the band read as paper.
-const GL_BODY_THICKNESS_MULTIPLIER = { phone: 5.6, tablet: 5.6, browser: 5.6 }
+//
+// laptop's own 4.2 is a smaller multiplier than the handheld devices' (a
+// laptop chassis is proportionally thinner than a phone's edge), chosen so
+// the chamfer this feeds (see glBandChamfer) actually reads as a metal rim at
+// the hero angle instead of vanishing into the aliasing a too-thin extrusion
+// produces. Applies to BOTH the laptop's rigid parts: buildLaptopDevice's
+// deck body (the keyboard tray's own edge) and its lid body (the screen
+// bezel's rim) share this one value so they read as the same material.
+const GL_BODY_THICKNESS_MULTIPLIER = { phone: 5.6, tablet: 5.6, browser: 5.6, laptop: 4.2 }
 
 /** @returns the GL-only body (frame) extrusion depth for `deviceName` — BODY_THICKNESS * 0.9, scaled by GL_BODY_THICKNESS_MULTIPLIER (1 if the device isn't listed). */
 export function glBodyThickness(deviceName) {
@@ -94,7 +99,7 @@ export function glBodyThickness(deviceName) {
 // pinned by a unit test.
 const GL_BAND_CHAMFER_FRACTION = 0.1
 
-/** @returns the chamfer depth (scene units) at each end of `deviceName`'s band — 0 for a device whose body isn't thickened (laptop), which keeps its original sharp extrusion. */
+/** @returns the chamfer depth (scene units) at each end of `deviceName`'s band, 0 for a device whose body isn't thickened, which keeps its original sharp extrusion. */
 export function glBandChamfer(deviceName) {
   if (!GL_BODY_THICKNESS_MULTIPLIER[deviceName]) return 0
   return glBodyThickness(deviceName) * GL_BAND_CHAMFER_FRACTION
@@ -381,6 +386,27 @@ const LAPTOP_DECK_PITCH_RAMP_DEG = 6
 export function laptopDeckPitchDeg(rotateX, rotateY) {
   const tilt = Math.max(Math.abs(rotateX || 0), Math.abs(rotateY || 0))
   return LAPTOP_DECK_PITCH_DEG * Math.min(1, tilt / LAPTOP_DECK_PITCH_RAMP_DEG)
+}
+
+// Device-scoped motion damping (spec: "a lot less movement of the laptop
+// compared to the smartphone mockup"; a laptop should read as a nearly-still
+// product beauty shot, not swing through the same pose amplitudes looks.js
+// tuned against a phone reference recording, see that module's own header
+// comment). Applied in applyPose() below to the pose's OWN rotation/
+// translation only, AFTER lidTiltCompensationDeg/laptopDeckPitchDeg have
+// already read the pose's full, undamped rotateX/rotateY for their own
+// degree contributions, so the hinge-tilt cancellation and the deck-reveal
+// hero pitch keep their exact existing magnitude regardless of this. Never
+// applied inside distanceBounds(): that function's own analytic pose is left
+// untouched, so the camera's own choreography (fit/bleed/screenFit, and so
+// every distance beat and the ending snap) is unaffected, exactly the
+// "camera work... stays" half of the spec. 0.4 sits in the spec's "roughly
+// 0.35 to 0.45" range; every other device keeps factor 1 (untouched).
+const MOTION_DAMPING = { laptop: 0.4 }
+
+/** @returns the pose motion-damping factor for `deviceName`, 1 (untouched) for any device not listed. */
+export function motionDampingFactor(deviceName) {
+  return MOTION_DAMPING[deviceName] ?? 1
 }
 
 /**
@@ -981,6 +1007,7 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   let deviceGroup = null
   let layerGroups = [] // {group, index, baseZ}
   let lidGroup = null
+  let motionScale = 1 // this build's device motion-damping factor, see motionDampingFactor()/applyPose()
   let disposables = [] // geometries/materials/textures owned by the current build
   let buildGen = 0 // guards a stale async texture load from rendering onto a torn-down scene
   let cameraFrameLayout = null // {distance, width, height, offsetX, offsetY, offsetZ} — see screenPlaneLayout()/cameraLayout()
@@ -1466,6 +1493,15 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
         offsetY: (device.bezel.bottom - device.bezel.top) / 2,
       },
     }
+    // The lid's own shell/body frame (see below), the same {width, height,
+    // body} shape buildFrameMesh reads, sized to the FULL lid rect (not the
+    // bezel-inset screen) so it fills the whole lid the same way the deck's
+    // frame fills the whole deck.
+    const lidBodyLayout = {
+      width: layout.width,
+      height: lidHeight,
+      body: { width: layout.width, height: lidHeight, radius: layout.body.radius },
+    }
 
     // Each layer gets its own explode-animated wrapper group (baseZ set
     // below), nested under whichever rigid part it belongs to.
@@ -1477,11 +1513,19 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
       return { group: layerGroup, index, baseZ }
     }
 
+    // Both rigid parts share one `finish` (see resolveFrameFinish) and one
+    // band chamfer (see glBandChamfer): the same aluminum family and light
+    // response on the deck's own edge and the lid's rim, so they read as one
+    // hinged machine rather than two differently-finished props.
+    const finish = resolveFrameFinish(sceneSpec.style.frame)
+    const bandChamfer = glBandChamfer(device.name)
+
     const deckTexture = buildDeckTexture(deckLayout.width, deckLayout.height)
     const shell = buildFrameMesh(deckLayout, 0x1c1c1e, BODY_THICKNESS)
     const body = buildFrameMesh(deckLayout, 0x2c2d30, glBodyThickness(device.name), {
-      finish: resolveFrameFinish(sceneSpec.style.frame),
+      finish,
       frontOffset: (BODY_THICKNESS * 0.9) / 2,
+      chamfer: bandChamfer,
       capTexture: deckTexture,
     })
     const shellLayer = layerGroupFor(shell, 0)
@@ -1514,22 +1558,42 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     baseRotor.add(baseGroup)
 
     const lid = new THREE.Group()
+    // The lid's own shell/body: without these the lid was just a screen and
+    // a glass pane floating with nothing behind or around them, no back
+    // cover, no bezel rim, and a gap of empty space between the screen's
+    // bottom edge and the deck's rear edge where a real hinge/chin bezel
+    // would be. Built exactly like buildFlatDevice's shell/body (same
+    // colors, same `finish`+chamfer band treatment as the deck above), just
+    // sized to the lid's own rect instead of the whole device's.
+    const lidShell = buildFrameMesh(lidBodyLayout, 0x1c1c1e, BODY_THICKNESS)
+    const lidBody = buildFrameMesh(lidBodyLayout, 0x2c2d30, glBodyThickness(device.name), {
+      finish,
+      frontOffset: (BODY_THICKNESS * 0.9) / 2,
+      chamfer: bandChamfer,
+    })
     const screenBuild = buildScreenMesh(lidScreenLayout, sceneSpec.content, screenPassthroughColor())
     const screen = screenBuild.mesh
     const glass = buildGlassMesh(lidScreenLayout, sceneSpec.style.glare)
-    // Position screen/glass relative to the lid's own local center, then
-    // offset the whole lid group so its pivot (local origin) sits at the
-    // hinge line — rotating `lid` therefore rotates about the hinge, not
-    // the lid's visual center.
+    // Position shell/body/screen/glass relative to the lid's own local
+    // center, then offset the whole lid group so its pivot (local origin)
+    // sits at the hinge line: rotating `lid` therefore rotates about the
+    // hinge, not the lid's visual center. lidShell/lidBody are centered on
+    // the same origin screen/glass are (see lidBodyLayout), so the same
+    // shift lands their own bottom edge exactly at the hinge too, flush with
+    // the deck's rear edge (see baseGroup's own hinge-edge shift above).
     const lidLocalCenterY = (lidHeight * UNIT) / 2
+    lidShell.position.y += lidLocalCenterY
+    lidBody.position.y += lidLocalCenterY
     screen.position.y += lidLocalCenterY
     glass.position.y += lidLocalCenterY
+    const lidShellLayer = layerGroupFor(lidShell, 0)
+    const lidBodyLayer = layerGroupFor(lidBody, 1)
     const screenLayer = layerGroupFor(screen, 2)
     const glassLayer = layerGroupFor(glass, 3)
-    lid.add(screenLayer.group, glassLayer.group)
+    lid.add(lidShellLayer.group, lidBodyLayer.group, screenLayer.group, glassLayer.group)
     lid.position.y = hingeY
 
-    const layerGroupSpecs = [shellLayer, bodyLayer, screenLayer, glassLayer]
+    const layerGroupSpecs = [shellLayer, bodyLayer, lidShellLayer, lidBodyLayer, screenLayer, glassLayer]
 
     group.add(baseRotor, lid)
 
@@ -1638,6 +1702,7 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     cornerScale = 1
     screenIsBrowserDevice = device.name === 'browser'
     screenComposeDims = { ...built.screenComposeDims, dpr: Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO) }
+    motionScale = motionDampingFactor(device.name)
 
     resizeToLayout(layout)
     applyPose(sceneSpec.pose)
@@ -1659,15 +1724,23 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     if (!deviceGroup) return
 
     const euler = poseToEuler(pose)
+    // Device-scoped motion damping (see motionDampingFactor): scales only the
+    // pose's OWN rotation. motionScale is 1 for every device but laptop, so
+    // this is a no-op everywhere else. Applied BEFORE the lid-tilt
+    // compensation/deck-reveal pitch below, which read pose.rotateX/rotateY
+    // directly and must keep their full, undamped magnitude regardless.
+    euler.x *= motionScale
+    euler.y *= motionScale
+    euler.z *= motionScale
     if (lidGroup) {
       euler.x += THREE.MathUtils.degToRad(
         lidTiltCompensationDeg(pose.lidAngle) + laptopDeckPitchDeg(pose.rotateX, pose.rotateY)
       )
     }
 
-    let posX = pose.translateX * UNIT
-    let posY = -pose.translateY * UNIT
-    let posZ = pose.translateZ * UNIT
+    let posX = pose.translateX * UNIT * motionScale
+    let posY = -pose.translateY * UNIT * motionScale
+    let posZ = pose.translateZ * UNIT * motionScale
 
     if (lidGroup && cameraFrameLayout) {
       // Laptop only: rotate the whole device around the screen's own center
