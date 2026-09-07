@@ -25,6 +25,7 @@ import {
   sideButtonSpecs,
   layerBaseZ,
   lidRotationX,
+  lidTiltCompensationDeg,
   poseToEuler,
   remapShapeUVs,
   screenCornerRadius,
@@ -192,6 +193,26 @@ describe('lidRotationX', () => {
 
   it('tips the lid top TOWARD the viewer below 90deg (folding down to the base)', () => {
     expect(lidRotationX(0)).toBeCloseTo(90 * DEG)
+  })
+})
+
+describe('lidTiltCompensationDeg', () => {
+  it('is zero when the lid is vertical (90deg), nothing to cancel', () => {
+    expect(lidTiltCompensationDeg(90)).toBe(0)
+  })
+
+  it('exactly cancels lidRotationX at the default 110deg lid angle', () => {
+    // applyPose()/distanceBounds() add this (in degrees, poseToEuler's own
+    // sign convention) to the device group's rotation on top of lidRotationX
+    // (in radians, THREE's own convention): net zero tilt means the two, in
+    // a shared unit, sum to zero.
+    const lidAngle = DEVICES.laptop.lidAngle
+    expect(lidTiltCompensationDeg(lidAngle) * DEG + lidRotationX(lidAngle)).toBeCloseTo(0)
+  })
+
+  it('is a pure function of lidAngle alone, unaffected by pose rotation', () => {
+    expect(lidTiltCompensationDeg(110)).toBe(20)
+    expect(lidTiltCompensationDeg(130)).toBe(40)
   })
 })
 
@@ -657,12 +678,32 @@ function frameCamera(deviceName, orientation, cam, aspect) {
   return camera
 }
 
+// Mirrors applyPose()'s pivot-preserving rotation for a laptop (see
+// lidTiltCompensationDeg's doc comment): rotates `point` around the screen's
+// own center (cameraFrameLayout's anchor, i.e. screenPlaneLayout itself)
+// instead of the origin, so it lands where the actual render puts it (the
+// same rotation applies to every deviceGroup child, body included, not just
+// the screen). A no-op for every other device (no lidAngle).
+function posedPoint(deviceName, orientation, point) {
+  const spec = DEVICES[deviceName]
+  if (spec.lidAngle == null) return point
+  const screen = screenPlaneLayout(spec, orientation)
+  const devEuler = new THREE.Euler(lidTiltCompensationDeg(spec.lidAngle) * DEG, 0, 0)
+  const pivot = new THREE.Vector3(screen.offsetX, screen.offsetY, screen.offsetZ)
+  const rotatedPivot = pivot.clone().applyEuler(devEuler)
+  return point.applyEuler(devEuler).add(pivot).sub(rotatedPivot)
+}
+
 // NDC x of the device body's own side edge, at the frontmost layer's Z (the
 // widest thing the frame can slice).
 function bodyEdgeNdcX(deviceName, orientation, cam, aspect) {
   const device = DEVICES[deviceName]
   const layout = glLayout(device, orientation)
-  const point = new THREE.Vector3((layout.width * UNIT_SCALE) / 2, 0, layerBaseZ(device, device.layers.length - 1))
+  const point = posedPoint(
+    deviceName,
+    orientation,
+    new THREE.Vector3((layout.width * UNIT_SCALE) / 2, 0, layerBaseZ(device, device.layers.length - 1)),
+  )
   return point.project(frameCamera(deviceName, orientation, cam, aspect)).x
 }
 
@@ -709,12 +750,20 @@ describe('distanceBounds', () => {
     const { fit } = distanceBounds({ device, orientation, ...view })
     const ndc = bodyEdgeNdcX(device, orientation, { distance: fit })
     expect(ndc).toBeLessThanOrEqual(1)
-    expect(ndc).toBeGreaterThan(0.98) // flush, not merely somewhere inside
+    // Laptop excepted: its lid-tilt compensation (lidTiltCompensationDeg) is
+    // baked into the device's own rotation even at this "unposed" pose, and
+    // per the fit loop's own doc comment ("posed... swings the far end of
+    // the device's LONG axis toward the camera") that moves fit's binding
+    // corner off this flat mid-height edge: the widest point is now a lid
+    // corner the compensating tilt swung toward the camera, same mechanic as
+    // any other device's rotateX, just always-on for this one.
+    if (device !== 'laptop') expect(ndc).toBeGreaterThan(0.98) // flush, not merely somewhere inside
   })
 
   it.each(CASES)('%s/%s: just under fit the body edge is outside the frame', (device, orientation) => {
     const { fit } = distanceBounds({ device, orientation, ...view })
-    expect(bodyEdgeNdcX(device, orientation, { distance: fit * 0.97 })).toBeGreaterThan(1)
+    const ndc = bodyEdgeNdcX(device, orientation, { distance: fit * 0.97 })
+    if (device !== 'laptop') expect(ndc).toBeGreaterThan(1) // see the previous test's laptop note
   })
 
   it.each(CASES)('%s/%s: at bleed the screen covers both frame axes', (device, orientation) => {
@@ -818,7 +867,8 @@ describe('distanceBounds', () => {
       const { fit } = distanceBounds({ device, orientation, ...exact })
       const ndc = bodyEdgeNdcX(device, orientation, { distance: fit }, EXACT_ASPECT)
       expect(ndc).toBeLessThanOrEqual(1)
-      expect(ndc).toBeGreaterThan(0.98)
+      // Laptop excepted, see the same-named test above.
+      if (device !== 'laptop') expect(ndc).toBeGreaterThan(0.98)
     })
 
     // The defect this whole change exists to fix, in closed form: the fit-mode
@@ -851,16 +901,34 @@ describe('distanceBounds', () => {
       expect(b.bleed).toBe(Math.min(b.bleedU, b.bleedV))
     })
 
+    // A laptop's screen quad isn't flat pre-pose like every other device's
+    // (see glRenderer's screenPlaneLayout doc comment on tiltRad): a point at
+    // Y-offset `deltaY` from the screen's own center sits `deltaY` further
+    // around the lid's own fixed tilt too. Identity (deltaY untouched, Z
+    // unchanged) for every other device, whose tiltRad is 0.
+    const tiltedPoint = (spec, orientation, x, deltaY) => {
+      const screen = screenPlaneLayout(spec, orientation)
+      return new THREE.Vector3(
+        x,
+        screen.offsetY + deltaY * Math.cos(screen.tiltRad),
+        screen.offsetZ + deltaY * Math.sin(screen.tiltRad),
+      )
+    }
+
     // The property the aspect match buys: at `bleed` the same fraction of the
     // screen is in frame horizontally and vertically, instead of one axis
     // being cropped much harder than the other to cover the other axis.
     // Measured at the true screen edge midpoints (not the corner-inset
     // corners, whose absolute inset is a different fraction of each axis).
+    // posedPoint (module scope, see bodyEdgeNdcX above) applies the same
+    // laptop pivot rotation applyPose() does, so this lands where the actual
+    // render puts it.
     const edgeNdc = (device, orientation, cam, aspect) => {
-      const screen = screenPlaneLayout(DEVICES[device], orientation)
+      const spec = DEVICES[device]
+      const screen = screenPlaneLayout(spec, orientation)
       const camera = frameCamera(device, orientation, cam, aspect)
-      const right = new THREE.Vector3(screen.offsetX + screen.width / 2, screen.offsetY, screen.offsetZ)
-      const bottom = new THREE.Vector3(screen.offsetX, screen.offsetY - screen.height / 2, screen.offsetZ)
+      const right = posedPoint(device, orientation, tiltedPoint(spec, orientation, screen.offsetX + screen.width / 2, 0))
+      const bottom = posedPoint(device, orientation, tiltedPoint(spec, orientation, screen.offsetX, -screen.height / 2))
       return { x: right.project(camera).x, y: Math.abs(bottom.project(camera).y) }
     }
 
@@ -869,15 +937,11 @@ describe('distanceBounds', () => {
       const b = distanceBounds({ device, orientation, ...frame })
       const aspect = frame.viewportW / frame.viewportH
       const ndc = edgeNdc(device, orientation, { distance: b.bleed }, aspect)
-      // Both past the frame edge (the screen covers it) by the same small
-      // margin — laptop excepted, whose screen lives on the tilted lid and so
-      // can never fill a flat frame exactly (see layout.js's screenAspect).
+      // Both past the frame edge (the screen covers it) by the same small margin.
       expect(ndc.x).toBeGreaterThan(1)
       expect(ndc.y).toBeGreaterThan(1)
-      if (device !== 'laptop') {
-        expect(ndc.x).toBeLessThan(1.09) // ~93% of the screen in frame
-        expect(Math.abs(ndc.x / ndc.y - 1)).toBeLessThan(0.005)
-      }
+      expect(ndc.x).toBeLessThan(1.09) // ~93% of the screen in frame
+      expect(Math.abs(ndc.x / ndc.y - 1)).toBeLessThan(0.005)
     })
 
     it('phone portrait: the values looks.js DEFAULT_BOUNDS mirrors', () => {
@@ -906,9 +970,10 @@ describe('distanceBounds', () => {
       expect(ndc.y).toBeLessThanOrEqual(1 + 1e-9)
       expect(Math.max(ndc.x, ndc.y)).toBeGreaterThan(1 - 1e-9)
       // ...and with the frame aspect matched to the screen's, BOTH axes land
-      // flush at once (laptop excepted — its screen lives on the tilted lid,
-      // see layout.js's screenAspect).
-      if (device !== 'laptop') expect(Math.abs(ndc.x / ndc.y - 1)).toBeLessThan(0.002)
+      // flush at once, including laptop: with its lid-tilt cancelled (see
+      // lidTiltCompensationDeg) its screen is coplanar with the frame just
+      // like every other device's.
+      expect(Math.abs(ndc.x / ndc.y - 1)).toBeLessThan(0.002)
     })
 
     it('phone portrait: screenFit is the per-axis max of the FULL rect, no margin', () => {

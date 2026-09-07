@@ -204,7 +204,11 @@ describe('outputDimensions', () => {
   })
 
   it('laptop/browser (always landscape) derive on the width axis', () => {
-    expect(outputDimensions('laptop', 'landscape', 1080)).toEqual({ width: 1760, height: 1080 })
+    // Laptop's width matches screenAspect's TRUE onscreen ratio (792/462,
+    // accounting for the base/lid split, see layout.js's screenAspect doc
+    // comment), not glLayout's approximate one (792/486, which treated the
+    // whole device height as available to the screen).
+    expect(outputDimensions('laptop', 'landscape', 1080)).toEqual({ width: 1852, height: 1080 })
     expect(outputDimensions('browser', 'landscape', 1080)).toEqual({ width: 1786, height: 1080 })
   })
 

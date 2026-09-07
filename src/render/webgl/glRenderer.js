@@ -8,7 +8,7 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { DEVICES } from '../../core/devices.js'
-import { glBezelScale, glLayout, screenAspect } from './layout.js'
+import { glBezelScale, glLayout, screenAspect, LAPTOP_BASE_HEIGHT } from './layout.js'
 import { composeChromeTexture } from './chromeTexture.js'
 
 // The pure, THREE-free device-layout math lives in ./layout.js so the Node
@@ -26,7 +26,6 @@ const UNIT = 0.01
 // renderers.
 const EXPLODE_Z_STEP = 0.6
 const BODY_THICKNESS = 0.06
-const LAPTOP_BASE_HEIGHT = 24 // px-ish units; matches the CSS renderer's laptop base height
 const CAMERA_FOV = 30
 const MAX_PIXEL_RATIO = 2
 const SHADOW_TEXTURE_SIZE = 256
@@ -319,6 +318,33 @@ export function lidRotationX(lidAngle) {
 }
 
 /**
+ * The extra device-level rotateX (degrees, same sign convention as
+ * pose.rotateX, see poseToEuler) that exactly cancels the laptop lid's own
+ * fixed recline (see lidRotationX above) for a given lidAngle. phone/tablet/
+ * browser have their screen coplanar with the body, so pose.rotateX 0 already
+ * renders it frontal; a laptop's screen instead sits on a lid reclined
+ * (lidAngle - 90) degrees past vertical, so at pose.rotateX 0 it would render
+ * as a foreshortened trapezoid tilted away from the camera rather than
+ * frontal. applyPose() adds this to the device group's own rotation (on top
+ * of lidRotationX's unchanged local lid rotation) so the two exactly cancel:
+ * net screen tilt becomes a pure function of pose.rotateX again, same as
+ * every other device, restoring the "screen coplanar with the frame the
+ * camera math assumes" (distanceBounds, constrainCameraDistance's frontal
+ * exemption) at rotateX 0 and every other rotateX alike. distanceBounds()
+ * adds the same amount to its own analytic quad rotation (_boundsEuler) so
+ * its fit/bleed/screenFit bounds stay in sync with what applyPose() actually
+ * renders.
+ *
+ * Exported (and pure) so it's unit-testable without a WebGL context.
+ *
+ * @param {number} lidAngle - degrees, see lidRotationX
+ * @returns {number} degrees
+ */
+export function lidTiltCompensationDeg(lidAngle) {
+  return lidAngle - 90
+}
+
+/**
  * World-space (scene-unit) rect of the rendered screen plane at a device's
  * default, untransformed pose — the anchor `cameraLayout()` aims UV targets
  * at. Mirrors the exact placement math buildFlatDevice()/buildLaptopDevice()
@@ -332,11 +358,17 @@ export function lidRotationX(lidAngle) {
  * e.g. 110deg) — a caller driving a non-default lidAngle via setPose would
  * see the camera's UV targeting drift slightly out of true, which is an
  * acceptable first-order approximation for this rig (the showcase choreography
- * this feeds keeps the laptop lid at its default angle).
+ * this feeds keeps the laptop lid at its default angle). `tiltRad` (0 for
+ * every other device) is the lid's own local rotation (see lidRotationX) that
+ * placed offsetY/offsetZ: distanceBounds() uses it to derive the screen
+ * quad's actual (non-flat) corners: a point at local Y-offset `d` from the
+ * screen's own center sits at (offsetY + d*cos(tiltRad), offsetZ +
+ * d*sin(tiltRad)), the same rotation generalized from a single point (the
+ * center) to the whole quad.
  *
  * @param {typeof DEVICES[keyof typeof DEVICES]} device
  * @param {'portrait'|'landscape'} orientation
- * @returns {{width: number, height: number, offsetX: number, offsetY: number, offsetZ: number}}
+ * @returns {{width: number, height: number, offsetX: number, offsetY: number, offsetZ: number, tiltRad: number}}
  */
 export function screenPlaneLayout(device, orientation) {
   const layout = glLayout(device, orientation)
@@ -348,6 +380,7 @@ export function screenPlaneLayout(device, orientation) {
       offsetX: layout.screen.offsetX * UNIT,
       offsetY: layout.screen.offsetY * UNIT,
       offsetZ: 0,
+      tiltRad: 0,
     }
   }
 
@@ -375,6 +408,7 @@ export function screenPlaneLayout(device, orientation) {
     offsetX: screenOffsetX * UNIT,
     offsetY: worldY,
     offsetZ: worldZ,
+    tiltRad: theta,
   }
 }
 
@@ -535,12 +569,40 @@ export function distanceBounds({
   const p = { rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, translateZ: 0, scale: 1, ...(pose || {}) }
   const scale = p.scale || 1
   // Same mapping applyPose() uses (translateY negated into world Y).
-  const tx = p.translateX * UNIT
-  const ty = -p.translateY * UNIT
-  const tz = p.translateZ * UNIT
+  let tx = p.translateX * UNIT
+  let ty = -p.translateY * UNIT
+  let tz = p.translateZ * UNIT
 
   const euler = poseToEuler(p)
-  _boundsEuler.set(euler.x, euler.y, euler.z)
+  // Laptop only, gated on the DEVICE spec's own lidAngle (spec.lidAngle is
+  // undefined for phone/tablet/browser), NOT on p.lidAngle, which looks.js's
+  // basePose() sets to DEFAULT_LID_ANGLE on every pose regardless of device,
+  // laptop or not. applyPose() adds this same compensation to the device
+  // group's own rotation (see lidTiltCompensationDeg's doc comment), so the
+  // analytic quad here must rotate by the same amount to stay in sync with
+  // the actual render: otherwise this function would keep computing bounds
+  // for the uncompensated (still-reclined) screen while the render shows the
+  // compensated (frontal-at-rotateX-0) one.
+  const lidAngle = spec.lidAngle != null ? (p.lidAngle ?? spec.lidAngle) : null
+  const eulerX = lidAngle != null ? euler.x + THREE.MathUtils.degToRad(lidTiltCompensationDeg(lidAngle)) : euler.x
+  _boundsEuler.set(eulerX, euler.y, euler.z)
+
+  if (lidAngle != null) {
+    // The lid-tilt compensation above rotates the whole device group, and a
+    // plain rotation-around-the-origin would drag the screen's own center
+    // away from `screen.offsetX/Y/Z`, the same fixed point cameraFrameLayout
+    // (glRenderer's render()) aims the camera at, forever, regardless of
+    // pose. applyPose() instead rotates around that center (an extra
+    // position offset cancels the drift a plain origin rotation would
+    // introduce), so this mirrors the same offset here: without it, every
+    // corner below would be computed for a screen that has silently drifted
+    // off the camera's aim, which is what left a residual gap on one frame
+    // axis even after the corner geometry itself (tiltRad) was exact.
+    _boundsVec.set(screen.offsetX, screen.offsetY, screen.offsetZ).multiplyScalar(scale).applyEuler(_boundsEuler)
+    tx += screen.offsetX - _boundsVec.x
+    ty += screen.offsetY - _boundsVec.y
+    tz += screen.offsetZ - _boundsVec.z
+  }
 
   // fit: whichever is larger of two candidates for the widest thing the frame
   // can slice — the UNROTATED body box at its frontmost layer face, and the
@@ -574,6 +636,16 @@ export function distanceBounds({
   const halfScreenW = Math.max(0, screen.width / 2 - inset)
   const halfScreenH = Math.max(0, screen.height / 2 - inset)
 
+  // A laptop's screen quad isn't flat pre-pose like every other device's: the
+  // lid's own fixed tilt (screenPlaneLayout's tiltRad) already carries each
+  // corner to a different depth by its own vertical offset from center, the
+  // same rotation screenPlaneLayout applies to place the center, generalized
+  // from that one point to the whole quad. 0 for every other device, so
+  // cornerYZ(delta) reduces to the previous flat (offsetY + delta, offsetZ).
+  const cosTilt = Math.cos(screen.tiltRad ?? 0)
+  const sinTilt = Math.sin(screen.tiltRad ?? 0)
+  const cornerYZ = (delta) => ({ y: screen.offsetY + delta * cosTilt, z: screen.offsetZ + delta * sinTilt })
+
   let bleedU = Infinity
   let bleedV = Infinity
   // screenFit: the same quad WITHOUT the corner inset, and taking the max
@@ -581,7 +653,8 @@ export function distanceBounds({
   let screenFit = 0
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
-      _boundsVec.set(screen.offsetX + sx * halfScreenW, screen.offsetY + sy * halfScreenH, screen.offsetZ)
+      const insetCorner = cornerYZ(sy * halfScreenH)
+      _boundsVec.set(screen.offsetX + sx * halfScreenW, insetCorner.y, insetCorner.z)
       _boundsVec.multiplyScalar(scale).applyEuler(_boundsEuler)
       const x = _boundsVec.x + tx
       const y = _boundsVec.y + ty
@@ -597,7 +670,8 @@ export function distanceBounds({
       // Same corner, full (un-inset) rect: the distance at which THIS corner
       // sits exactly on the frame edge. Pulling back to the largest of them
       // is what puts every corner inside the frame at once.
-      _boundsVec.set(screen.offsetX + (sx * screen.width) / 2, screen.offsetY + (sy * screen.height) / 2, screen.offsetZ)
+      const full = cornerYZ((sy * screen.height) / 2)
+      _boundsVec.set(screen.offsetX + (sx * screen.width) / 2, full.y, full.z)
       _boundsVec.multiplyScalar(scale).applyEuler(_boundsEuler)
       const fx = _boundsVec.x + tx
       const fy = _boundsVec.y + ty
@@ -851,6 +925,10 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   let disposables = [] // geometries/materials/textures owned by the current build
   let buildGen = 0 // guards a stale async texture load from rendering onto a torn-down scene
   let cameraFrameLayout = null // {distance, width, height, offsetX, offsetY, offsetZ} — see screenPlaneLayout()/cameraLayout()
+  // applyPose()'s own scratch objects (laptop's pivot-preserving rotation,
+  // see its doc comment), pre-allocated since applyPose() runs every frame.
+  const _poseVec = new THREE.Vector3()
+  const _poseEuler = new THREE.Euler()
 
   // setScreenSource()/updateScreen() state: an external <canvas> replacing
   // the content-image texture path (see the doc comment on setScreenSource
@@ -1463,8 +1541,34 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   function applyPose(pose) {
     if (!deviceGroup) return
 
-    deviceGroup.position.set(pose.translateX * UNIT, -pose.translateY * UNIT, pose.translateZ * UNIT)
     const euler = poseToEuler(pose)
+    if (lidGroup) euler.x += THREE.MathUtils.degToRad(lidTiltCompensationDeg(pose.lidAngle))
+
+    let posX = pose.translateX * UNIT
+    let posY = -pose.translateY * UNIT
+    let posZ = pose.translateZ * UNIT
+
+    if (lidGroup && cameraFrameLayout) {
+      // Laptop only: rotate the whole device around the screen's own center
+      // (cameraFrameLayout's anchor, the same fixed point setCamera() aims
+      // at, forever, regardless of pose) instead of deviceGroup's own origin.
+      // A plain origin rotation would drag that center away from the
+      // camera's aim by the lid-tilt compensation above (and by however much
+      // further the pose itself rotates); an extra position offset here
+      // cancels exactly that drift. distanceBounds() mirrors this same
+      // offset, or its analytic corners would drift out of sync with what
+      // this actually renders.
+      const pivotX = cameraFrameLayout.offsetX
+      const pivotY = cameraFrameLayout.offsetY
+      const pivotZ = cameraFrameLayout.offsetZ
+      _poseEuler.set(euler.x, euler.y, euler.z)
+      _poseVec.set(pivotX, pivotY, pivotZ).multiplyScalar(pose.scale).applyEuler(_poseEuler)
+      posX += pivotX - _poseVec.x
+      posY += pivotY - _poseVec.y
+      posZ += pivotZ - _poseVec.z
+    }
+
+    deviceGroup.position.set(posX, posY, posZ)
     deviceGroup.rotation.set(euler.x, euler.y, euler.z)
     deviceGroup.scale.setScalar(pose.scale)
 

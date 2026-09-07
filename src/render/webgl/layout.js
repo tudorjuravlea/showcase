@@ -10,6 +10,14 @@
 
 import { DEVICES, deviceDims } from '../../core/devices.js'
 
+// Laptop only: buildLaptopDevice() (glRenderer.js) splits the device's own
+// height into a BASE (keyboard) this tall and a LID above it: the screen
+// lives on the lid alone, so it's this much shorter than the device's full
+// height. Shared here (rather than kept local to glRenderer.js, which owns
+// buildLaptopDevice) so screenAspect() below can size the output frame from
+// the screen's true onscreen height instead of the whole device's.
+export const LAPTOP_BASE_HEIGHT = 24 // px-ish units; matches the CSS renderer's laptop base height
+
 // DEVICES' bezel values render correctly in the CSS renderer's flat 2D
 // layout, but next to the thicker GL body they read as an oversized dark
 // ring — the reference hardware's bezel is thin and uniform. Scales each
@@ -77,11 +85,15 @@ export function glLayout(device, orientation) {
  *
  * Laptop caveat: the laptop's screen actually lives on the hinged lid, whose
  * rect (screenPlaneLayout in glRenderer.js) is shorter than glLayout's by the
- * base height — and it is foreshortened by the 110deg lid angle anyway, so an
- * exact full-screen fill is not reachable for that device at any frame aspect.
- * glLayout's rect is the right approximation here: it is the same rect the
- * content is cover-fit into (src/showcase/runtime.js), so the frame matches
- * the *content's* aspect for every device.
+ * base height: glLayout's screen.height treats the whole device height as
+ * available to the screen, when buildLaptopDevice() actually gives
+ * LAPTOP_BASE_HEIGHT of it to the base instead. Corrected below so the frame
+ * matches the screen's TRUE onscreen aspect, which (together with
+ * distanceBounds()'s own lid-tilt correction in glRenderer.js) is what makes
+ * screenFit's "whole screen inscribed on both axes" exact for a laptop too,
+ * rather than leaving a residual gap on one axis. glLayout's OWN rect is left
+ * untouched here: it still governs content cover-fit
+ * (src/showcase/runtime.js), a separate concern from this frame-sizing one.
  *
  * @param {object|string} device - a DEVICES spec or its name (bin/showcase.mjs
  *   passes the name straight off the CLI flag)
@@ -92,5 +104,8 @@ export function screenAspect(device, orientation) {
   const spec = typeof device === 'string' ? DEVICES[device] : device
   if (!spec) throw new Error(`screenAspect: unknown device "${device}"`)
   const { screen } = glLayout(spec, orientation)
-  return screen.width / screen.height
+  if (spec.name !== 'laptop') return screen.width / screen.height
+  const dims = deviceDims(spec, orientation)
+  const trueScreenHeight = dims.height - LAPTOP_BASE_HEIGHT - spec.bezel.top - spec.bezel.bottom
+  return screen.width / trueScreenHeight
 }
