@@ -16,10 +16,23 @@ const KEY_GAP_RATIO = 0.16 // gap between keys within a row, fraction of key pit
 const TRACKPAD_HEIGHT_RATIO = 0.32 // fraction of height given to the trackpad band
 const TRACKPAD_WIDTH_RATIO = 0.3 // fraction of width
 
-const WELL_COLOR = '#1b1c1e'
-const KEY_COLOR = '#333438'
+// Deck surface (the palm-rest area the keys sit in): a soft diagonal
+// gradient instead of a flat fill, so it reads as a curved brushed-metal
+// panel catching light unevenly rather than a flat painted plate.
+const DECK_SURFACE_TOP = '#3a3b40'
+const DECK_SURFACE_BOTTOM = '#222327'
+// Recessed well immediately around each key: deliberately darker than the
+// old flat background so the key visibly sits IN a cutout rather than on a
+// same-tone plate.
+const WELL_COLOR = '#0e0f11'
+const WELL_INSET_RATIO = 0.16 // how far the well extends past the key on each side, as a fraction of the key's own (smaller) dimension
+// Each key's own fill is a subtle top-to-bottom gradient (lighter top edge,
+// darker base) rather than a flat color, so it reads as a sculpted cap
+// catching a highlight instead of a painted rectangle.
+const KEY_COLOR_TOP = '#3d3e44'
+const KEY_COLOR_BOTTOM = '#28292d'
 const TRACKPAD_FILL = 'rgba(255, 255, 255, 0.05)'
-const TRACKPAD_STROKE = 'rgba(255, 255, 255, 0.4)'
+const TRACKPAD_STROKE = 'rgba(255, 255, 255, 0.35)'
 
 /**
  * Pure layout for the keyboard deck, in the same {width, height} space the
@@ -106,13 +119,39 @@ export function composeKeyboardTexture(width, height, dpr = 1) {
   const ctx = canvas.getContext('2d')
   ctx.scale(dpr, dpr)
 
-  ctx.fillStyle = WELL_COLOR
+  // Deck surface first: a soft diagonal gradient (see DECK_SURFACE_TOP/
+  // BOTTOM) rather than a flat fill, so the palm rest around the keys reads
+  // as curved brushed metal.
+  const surfaceGradient = ctx.createLinearGradient(0, 0, width, height)
+  surfaceGradient.addColorStop(0, DECK_SURFACE_TOP)
+  surfaceGradient.addColorStop(1, DECK_SURFACE_BOTTOM)
+  ctx.fillStyle = surfaceGradient
   ctx.fillRect(0, 0, width, height)
 
   const { keys, trackpad } = keyboardLayout(width, height)
 
-  ctx.fillStyle = KEY_COLOR
   for (const key of keys) {
+    // A darker recessed well behind each key, slightly larger than the key
+    // itself, so the key visibly sits in a cutout rather than floating on
+    // the same-tone surface.
+    const wellPad = Math.min(key.w, key.h) * WELL_INSET_RATIO
+    ctx.fillStyle = WELL_COLOR
+    drawRoundedRect(
+      ctx,
+      key.x - wellPad,
+      key.y - wellPad,
+      key.w + wellPad * 2,
+      key.h + wellPad * 2,
+      (key.h + wellPad * 2) * 0.3
+    )
+    ctx.fill()
+
+    // The key itself: a subtle top-to-bottom highlight (see KEY_COLOR_TOP/
+    // BOTTOM) so it reads as a sculpted cap, not a flat painted rectangle.
+    const keyGradient = ctx.createLinearGradient(key.x, key.y, key.x, key.y + key.h)
+    keyGradient.addColorStop(0, KEY_COLOR_TOP)
+    keyGradient.addColorStop(1, KEY_COLOR_BOTTOM)
+    ctx.fillStyle = keyGradient
     drawRoundedRect(ctx, key.x, key.y, key.w, key.h, key.h * 0.28)
     ctx.fill()
   }
@@ -121,7 +160,10 @@ export function composeKeyboardTexture(width, height, dpr = 1) {
   ctx.fillStyle = TRACKPAD_FILL
   ctx.fill()
   ctx.strokeStyle = TRACKPAD_STROKE
-  ctx.lineWidth = Math.max(1, height * 0.012)
+  // Hairline: a fixed, thin stroke rather than one that scales with the
+  // deck's own height. At the deck's real render size (a few dozen px tall)
+  // the old height-scaled width read as a thick painted border, not a hairline.
+  ctx.lineWidth = 1
   ctx.stroke()
 
   return canvas

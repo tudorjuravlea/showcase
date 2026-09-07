@@ -184,7 +184,10 @@ async function drawContentFrameAt(t) {
 }
 
 function currentCtx() {
-  return { duration: cfgState.duration, activity: cfgState.activity || [] }
+  // device: read by looks.js's reference() to pick the laptop's own
+  // device-aware keyframe set (see LAPTOP_BASE_KEYFRAMES); every other look
+  // ignores it.
+  return { duration: cfgState.duration, activity: cfgState.activity || [], device: cfgState.device }
 }
 
 // cfg.contained (--contained, for slide/column embeds) swaps the two-state
@@ -231,11 +234,21 @@ function screenCornerScale(screen) {
   return screen?.cornerScale ?? 1
 }
 
+// Same reasoning as screenCornerScale above, for the laptop's glass sheen
+// (see glRenderer's setSheenOpacity): only the reference look's ending fades
+// it, and only because the screen fills the frame there. In --contained
+// mode the device never fills the frame, so the sheen stays as authored.
+function screenSheenScale(screen) {
+  if (cfgState.contained) return 1
+  return screen?.sheenScale ?? 1
+}
+
 function applyFrame(t) {
   const { pose, camera, screen } = resolveFrame(t)
   renderer.setPose(pose)
   renderer.setCamera(camera)
   renderer.setScreenCorners(screenCornerScale(screen))
+  renderer.setSheenOpacity(screenSheenScale(screen))
   renderer.updateScreen()
 }
 
@@ -368,6 +381,7 @@ function enterIdle() {
     // The idle rests ON the look's last frame, so it keeps that frame's
     // corner state too (no-op after the first call — see setScreenCorners).
     renderer.setScreenCorners(screenCornerScale(restFrame.screen))
+    renderer.setSheenOpacity(screenSheenScale(restFrame.screen))
     renderer.updateScreen()
     rafHandle = requestAnimationFrame(idleFrame)
   }

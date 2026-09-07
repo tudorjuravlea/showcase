@@ -294,7 +294,7 @@ describe('reference', () => {
       it('is the only look that drives screen state', () => {
         for (const key of LOOK_KEYS) {
           const frame = lookFrame(key, 0.95, { duration: 8, activity: [] })
-          if (key === 'reference') expect(frame.screen).toEqual({ cornerScale: 0 })
+          if (key === 'reference') expect(frame.screen).toEqual({ cornerScale: 0, sheenScale: 0 })
           else expect(frame.screen).toBeUndefined()
         }
       })
@@ -311,6 +311,91 @@ describe('reference', () => {
         const without = lookFrame('reference', t, { duration: 8 })
         expect(without.camera.distance).toBeCloseTo(withBounds.camera.distance, 2)
       }
+    })
+  })
+
+  // Device-aware keyframes (LAPTOP_BASE_KEYFRAMES), sanctioned by the project
+  // owner for the laptop specifically: "enters the image then quickly snaps
+  // into the slot without much movement." Dispatched on ctx.device === 'laptop'
+  // only; every other device (including ctx.device omitted or any non-laptop
+  // value) keeps REFERENCE_BASE_KEYFRAMES verbatim, see the next test.
+  describe('laptop keyframes (device-aware)', () => {
+    const bounds = { fit: 0.8, screenFit: 0.62, bleed: 0.5, uSpan: 1, vSpan: 1 }
+    const duration = 9
+    const ctx = { duration, bounds, device: 'laptop' }
+    const phoneCtx = { duration, bounds }
+
+    it('only dispatches on device "laptop", every other device (including undefined) keeps the phone-style keyframes', () => {
+      const withoutDevice = lookFrame('reference', 0, phoneCtx)
+      const otherDevice = lookFrame('reference', 0, { ...phoneCtx, device: 'phone' })
+      expect(withoutDevice).toEqual(otherDevice)
+      // REFERENCE_BASE_KEYFRAMES' own t=0 beat, untouched.
+      expect(withoutDevice.pose.rotateY).toBeCloseTo(-14, 5)
+      expect(withoutDevice.pose.translateY).toBe(0)
+    })
+
+    it('starts below the frame (large translateY) and rises, still rising partway through the entry rather than arriving instantly', () => {
+      const start = lookFrame('reference', 0, ctx)
+      expect(start.pose.translateY).toBeGreaterThan(500)
+      const partway = lookFrame('reference', 0.03, ctx)
+      expect(partway.pose.translateY).toBeGreaterThan(0)
+      expect(partway.pose.translateY).toBeLessThan(start.pose.translateY)
+    })
+
+    it('snaps into the resting pose (translateY settled to 0) within the first 10-15% of the clip, per spec', () => {
+      const settled = lookFrame('reference', 0.15, ctx)
+      expect(settled.pose.translateY).toBe(0)
+    })
+
+    it('overshoots slightly past rest before settling, the same punch-then-settle shape as the ending snap', () => {
+      const atRise = lookFrame('reference', 0.12, ctx).pose.translateY
+      const atSettle = lookFrame('reference', 0.15, ctx).pose.translateY
+      expect(atRise).toBeLessThan(0) // past rest, not just approaching it
+      expect(atSettle).toBe(0)
+    })
+
+    it('resolves a legal, fully-in-frame distance (>= the fit bound) throughout entry and hold', () => {
+      // Anchored to the symbolic 'fit' bound with factor >= 1 throughout (see
+      // LAPTOP_BASE_KEYFRAMES): never in the forbidden zone between bleed
+      // and fit (constrainCameraDistance), regardless of how the pose's own
+      // rotation drifts frame to frame.
+      for (const t of [0, 0.02, 0.05, 0.08, 0.1, 0.12, 0.15, 0.2, 0.3, 0.5, 0.65, 0.7, 0.75]) {
+        const { distance } = lookFrame('reference', t, ctx).camera
+        expect(distance).toBeGreaterThanOrEqual(bounds.fit - 1e-9)
+      }
+    })
+
+    it('holds dead-still through most of the hold: rotation delta between samples 2s apart is exactly zero', () => {
+      const at = (seconds) => lookFrame('reference', seconds / duration, ctx).pose
+      const a = at(2)
+      const b = at(4)
+      expect(b.rotateX).toBeCloseTo(a.rotateX, 9)
+      expect(b.rotateY).toBeCloseTo(a.rotateY, 9)
+      expect(b.translateY).toBe(a.translateY)
+    })
+
+    it('eases gently toward frontal only in the last tenth of the hold, for a smooth hand-off into the shared ending', () => {
+      const flat = lookFrame('reference', 0.65, ctx).pose
+      const handoff = lookFrame('reference', 0.75, ctx).pose
+      expect(flat.rotateY).toBeCloseTo(8, 5)
+      expect(Math.abs(handoff.rotateY)).toBeLessThan(Math.abs(flat.rotateY))
+      expect(Math.abs(handoff.rotateX)).toBeLessThan(Math.abs(flat.rotateX))
+    })
+
+    it('carries no micro-float overlay: two samples an instant apart during the flat hold are identical', () => {
+      const a = lookFrame('reference', 0.4, ctx)
+      const b = lookFrame('reference', 0.4 + 1e-4, ctx)
+      expect(b.pose.rotateX).toBe(a.pose.rotateX)
+      expect(b.pose.rotateY).toBe(a.pose.rotateY)
+    })
+
+    it('hands off into the SAME shared frontal ending as every other device, same constants, same timing', () => {
+      const laptopEnd = lookFrame('reference', 1, ctx)
+      const phoneEnd = lookFrame('reference', 1, phoneCtx)
+      expect(laptopEnd.camera.distance).toBeCloseTo(phoneEnd.camera.distance, 10)
+      expect(laptopEnd.pose.rotateX).toBe(0)
+      expect(laptopEnd.pose.rotateY).toBe(0)
+      expect(laptopEnd.screen.cornerScale).toBe(0)
     })
   })
 })

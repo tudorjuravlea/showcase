@@ -3,8 +3,8 @@
 // Every look is a function of (t, ctx) -> {pose, camera, screen?}: `t` is 0..1
 // progress across the showcase's output duration, `pose` is a full
 // glRenderer setPose() pose, `camera` is a full glRenderer setCamera() rig,
-// and the optional `screen` carries per-frame screen state (currently just
-// `cornerScale` for glRenderer's setScreenCorners()).
+// and the optional `screen` carries per-frame screen state (`cornerScale` for
+// glRenderer's setScreenCorners(), `sheenScale` for its setSheenOpacity()).
 // Must not import React or touch the DOM — src/showcase/runtime.js is the
 // only caller, and this module is also unit-tested directly (tests/looks.test.js).
 
@@ -71,6 +71,130 @@ const REFERENCE_BASE_KEYFRAMES = [
   { t: 0.48, rotateY: 6, rotateX: 14, distance: 'fit', factor: 1.09, targetV: 0.35 },
   { t: 0.62, rotateY: -3, rotateX: 3, distance: 1.05, targetV: 0.5 },
   { t: 0.76, rotateY: -2, rotateX: 1, distance: 'fit', targetV: 0.5 },
+]
+
+// --- Laptop-only entry + hold (device-aware keyframes, sanctioned by the ---
+// project owner for the laptop specifically: "enters the image then quickly
+// snaps into the slot without much movement." Every other device keeps
+// REFERENCE_BASE_KEYFRAMES (and its exact frames) untouched, see
+// referenceKeyframes()'s device dispatch below. Only the OPENING beats are
+// replaced; the tail (frontal settle -> snap -> corner melt, appended by
+// referenceKeyframes() after whichever base array is chosen) is shared and
+// unmodified, same constants, same timing.
+//
+// The device starts translated well below the frame (translateY, positive,
+// see glRenderer's applyPose, which negates it into world Y) and rises to
+// its resting hero tilt with a fast ease-out ('snap', same shape as the
+// ending's own punch, see snapEase) into a slight overshoot, then settles
+// back, mirroring REFERENCE_SNAP_*'s punch-then-settle pattern, just for the
+// entry instead of the exit. Distance is anchored to the symbolic 'fit' bound
+// throughout (not a plain number): the two-state lateral-fit rule
+// (constrainCameraDistance) only ever forbids a NUMBER caught between bleed
+// and fit, never the 'fit' bound itself, so entry and hold can never crop the
+// device's sides regardless of how its own rotation (and so `fit` itself)
+// drifts frame to frame. translateY never enters that lateral computation at
+// all (only X/Z do, see distanceBounds' `fit` derivation), so the vertical
+// rise is free to move however far it needs to.
+const LAPTOP_HERO_ROTATE_Y = 8 // resting hero tilt (RAW pose value: laptopDeckPitchDeg's deck-reveal ramp reads this pre motionDampingFactor('laptop'), so the deck stays revealed even though the RENDERED tilt is dampened to a couple of degrees, see applyPose())
+const LAPTOP_HERO_ROTATE_X = -3
+const LAPTOP_HOLD_ROTATE_FRACTION = 0.25 // how far the tilt has eased toward frontal by the hold's last beat, for a smooth hand-off into the shared frontal ending
+// Wider than 'fit' itself (unlike every other look's hero framing, which
+// sits AT its bound): 'fit' only guarantees the device's WIDTH is contained
+// (see distanceBounds' own doc comment: "exiting, if at all, only through the
+// top/bottom"), so at factor 1 the deck's own front edge sits flush with the
+// frame's bottom edge, leaving no room for the contact shadow beneath it (see
+// buildLaptopContactShadow in glRenderer.js) to ever read. The extra pull-back
+// also reads as a calmer, more generously-framed product shot than a tight
+// crop would. Settles a little closer by the hold's end (still comfortably
+// clear of the deck) for the "gentle slow push-in" the spec asks for.
+const LAPTOP_HOLD_FIT_FACTOR_START = 1.32
+const LAPTOP_HOLD_FIT_FACTOR_END = 1.22
+// Below-frame start / overshoot-past-rest for translateY, in the same raw
+// px-ish unit space every other look's translateY uses (e.g. hero-rise's
+// RISE_START_TRANSLATE_Y), scaled up from what the on-screen motion should
+// read as, to compensate for motionDampingFactor('laptop') (0.4): applyPose()
+// damps translateY the same way it damps rotation, so an undamped-scale value
+// here would rise at only 40% of the visual amplitude a phone-scale number
+// implies. 2000 * 0.4 = 800 effective scene-unit-equivalent rise, measured
+// against the rendered frame (distanceBounds' own vertical half-extent at the
+// entry framing is ~3.2 world units, i.e. ~320 in this px-ish*UNIT scale) so
+// the device starts fully below the visible frame, not just partly cropped.
+const LAPTOP_ENTRY_START_TRANSLATE_Y = 2000
+const LAPTOP_ENTRY_OVERSHOOT_TRANSLATE_Y = -60
+// Snapped into the resting pose within the first 10-15% of the clip, per
+// spec: the fast ease-out (snapEase) runs across this WHOLE span (not a
+// sub-slice of it), so the rise itself is visible across the span and arrives
+// right at its end, quint-decelerating into the arrival the way the ending's
+// own punch decelerates into `screenFit` (see snapEase / REFERENCE_SNAP_*).
+const LAPTOP_ENTRY_RISE_T = 0.12
+// The small overshoot settles back to rest shortly after, the same punch-
+// then-settle shape as the ending's snap, just for the entry.
+const LAPTOP_ENTRY_SETTLE_T = 0.15
+// Where the dead-flat span ends and the short ease toward frontal begins:
+// most of the hold (0.15 to 0.65, ~4.5s of a 9s clip) is spent completely
+// static; only the last tenth eases toward the shared ending's frontal beat.
+const LAPTOP_HOLD_FLAT_T = 0.65
+const LAPTOP_HOLD_END_T = 0.75 // hands off to the shared frontal ending beat (referenceCornerStart floors at 0.8)
+
+const LAPTOP_BASE_KEYFRAMES = [
+  {
+    t: 0,
+    rotateY: LAPTOP_HERO_ROTATE_Y,
+    rotateX: LAPTOP_HERO_ROTATE_X,
+    distance: 'fit',
+    factor: LAPTOP_HOLD_FIT_FACTOR_START,
+    translateY: LAPTOP_ENTRY_START_TRANSLATE_Y,
+    targetV: 0.5,
+  },
+  // Fast ease-out rise to a slight overshoot past the resting position, the
+  // same punch shape as the ending's snap (see snapEase), just entering
+  // instead of exiting.
+  {
+    t: LAPTOP_ENTRY_RISE_T,
+    rotateY: LAPTOP_HERO_ROTATE_Y,
+    rotateX: LAPTOP_HERO_ROTATE_X,
+    distance: 'fit',
+    factor: LAPTOP_HOLD_FIT_FACTOR_START,
+    translateY: LAPTOP_ENTRY_OVERSHOOT_TRANSLATE_Y,
+    targetV: 0.5,
+    ease: 'snap',
+  },
+  // Settled into the resting hero pose: the long calm hold starts here.
+  {
+    t: LAPTOP_ENTRY_SETTLE_T,
+    rotateY: LAPTOP_HERO_ROTATE_Y,
+    rotateX: LAPTOP_HERO_ROTATE_X,
+    distance: 'fit',
+    factor: LAPTOP_HOLD_FIT_FACTOR_START,
+    translateY: 0,
+    targetV: 0.5,
+  },
+  // Dead-flat hold: identical rotation/distance to the settle beat above, so
+  // every frame in between is EXACTLY the same pose (no float overlay either,
+  // see reference()'s laptop branch): "near-zero rotation" read literally,
+  // not just small. Most of the hold lives in this span.
+  {
+    t: LAPTOP_HOLD_FLAT_T,
+    rotateY: LAPTOP_HERO_ROTATE_Y,
+    rotateX: LAPTOP_HERO_ROTATE_X,
+    distance: 'fit',
+    factor: LAPTOP_HOLD_FIT_FACTOR_START,
+    translateY: 0,
+    targetV: 0.5,
+  },
+  // ...then a short, gentle ease toward frontal and a touch closer, ready for
+  // a smooth hand-off into the shared ending beats below (the "gentle slow
+  // push-in" the spec asks for is concentrated here rather than spread across
+  // the whole hold, so the flat span above stays truly static).
+  {
+    t: LAPTOP_HOLD_END_T,
+    rotateY: LAPTOP_HERO_ROTATE_Y * LAPTOP_HOLD_ROTATE_FRACTION,
+    rotateX: LAPTOP_HERO_ROTATE_X * LAPTOP_HOLD_ROTATE_FRACTION,
+    distance: 'fit',
+    factor: LAPTOP_HOLD_FIT_FACTOR_END,
+    translateY: 0,
+    targetV: 0.5,
+  },
 ]
 
 // --- The ending: hold, square the corners, then SNAP in --------------------
@@ -170,21 +294,26 @@ export function referenceCornerMelt(duration) {
 }
 
 /**
- * The reference look's keyframes for a clip of `duration` seconds — the fixed
- * beats above plus the duration-dependent ending (see the block comment).
+ * The reference look's keyframes for a clip of `duration` seconds: the
+ * opening beats plus the duration-dependent ending (see the block comment).
  * `cornerScale` (1 = the screen's authored corner radius, 0 = square) rides
  * along as a third channel next to pose and camera.
+ *
  * @param {number} [duration] - seconds
+ * @param {string} [device] - a DEVICES key. Only 'laptop' is special-cased
+ *   (see LAPTOP_BASE_KEYFRAMES's own doc comment); every other value (and
+ *   the omitted default) keeps REFERENCE_BASE_KEYFRAMES, unchanged.
  * @returns {object[]}
  */
-export function referenceKeyframes(duration) {
+export function referenceKeyframes(duration, device) {
   const span = referenceSnapSpan(duration)
   const snapStart = REFERENCE_ENDING_T - span
   const cornerStart = referenceCornerStart(duration)
   const melt = referenceCornerMelt(duration)
   const frontal = { rotateY: 0, rotateX: 0, targetV: 0.5 }
+  const base = device === 'laptop' ? LAPTOP_BASE_KEYFRAMES : REFERENCE_BASE_KEYFRAMES
   return [
-    ...REFERENCE_BASE_KEYFRAMES,
+    ...base,
     // Settled dead-frontal and still at `fit`: screenFit is only a legal
     // distance while the pose is within FRONTAL_POSE_EPSILON_DEG (see
     // constrainCameraDistance's frontal exemption), so the rotation has to be
@@ -236,6 +365,9 @@ const DEFAULT_BOUNDS = { fit: 0.7294, screenFit: 0.7007, bleed: 0.6547 }
 // Micro-float overlay strength for the reference look — kept subtle so the
 // dwell beats stay alive without fighting the deliberate keyframed moves.
 const REFERENCE_FLOAT_SCALE = 0.3
+// The laptop's own choreography (see LAPTOP_BASE_KEYFRAMES) asks for a calm,
+// near-still hold rather than a "kept alive" dwell: no float overlay at all.
+const LAPTOP_FLOAT_SCALE = 0
 
 // auto-action's between-segments pull-back beat (spec: "pull back + rotate slightly en route to
 // next"). A gap counts as "meaningful" once it exceeds this fraction of the total duration —
@@ -486,12 +618,16 @@ function autoAction(t, ctx) {
   }
 }
 
-// reference: interpolates REFERENCE_KEYFRAMES with ease-in-out, overlaying
-// the same micro-float used elsewhere (scaled down — see
-// REFERENCE_FLOAT_SCALE) so dwell beats stay alive.
+// reference: interpolates REFERENCE_KEYFRAMES (or, for the laptop,
+// LAPTOP_BASE_KEYFRAMES plus the same shared ending, see referenceKeyframes())
+// with ease-in-out, overlaying the same micro-float used elsewhere (scaled
+// down, see REFERENCE_FLOAT_SCALE) so dwell beats stay alive. The laptop
+// skips that overlay entirely (LAPTOP_FLOAT_SCALE): its own choreography
+// asks for a calm, near-still hold instead.
 function reference(t, ctx) {
   const clamped = clamp01(t)
-  const keyframes = referenceKeyframes(ctx?.duration)
+  const isLaptop = ctx?.device === 'laptop'
+  const keyframes = referenceKeyframes(ctx?.duration, ctx?.device)
   let a = keyframes[0]
   let b = keyframes[keyframes.length - 1]
   for (let i = 0; i < keyframes.length - 1; i++) {
@@ -516,11 +652,15 @@ function reference(t, ctx) {
   // On top of that it fades to zero before the snap — see
   // REFERENCE_FLOAT_FADE_START. ease-in-out flattens at both ends, so the
   // fade neither jerks when it starts nor leaves a residue when it lands.
+  // Reused below for the laptop's glass sheen (screen.sheenScale): same
+  // window, same reason. The sheen sits right on the screen content itself,
+  // so it has to be fully gone (not just faded, like the float) by
+  // `cornerStart`, the frontal settle that precedes the ending snap.
   const floatPhase = t * Math.PI * 2
   const fadeEnd = referenceCornerStart(ctx?.duration)
   const fadeSpan = Math.max(1e-6, fadeEnd - REFERENCE_FLOAT_FADE_START)
   const fade = 1 - EASINGS['ease-in-out'](clamp01((clamped - REFERENCE_FLOAT_FADE_START) / fadeSpan))
-  const floatScale = REFERENCE_FLOAT_SCALE * distance * fade
+  const floatScale = (isLaptop ? LAPTOP_FLOAT_SCALE : REFERENCE_FLOAT_SCALE) * distance * fade
   const floatRotateY = Math.sin(floatPhase) * FLOAT_ROTATE_Y_AMPLITUDE * floatScale
   const floatRotateX = Math.cos(floatPhase) * FLOAT_ROTATE_X_AMPLITUDE * floatScale
 
@@ -528,6 +668,10 @@ function reference(t, ctx) {
     pose: basePose({
       rotateX: lerp(a.rotateX, b.rotateX, p) + floatRotateX,
       rotateY: lerp(a.rotateY, b.rotateY, p) + floatRotateY,
+      // Entry only (see LAPTOP_BASE_KEYFRAMES): every other keyframe set
+      // never sets this, so ?? 0 keeps every non-laptop look's translateY at
+      // exactly 0, as before.
+      translateY: lerp(a.translateY ?? 0, b.translateY ?? 0, p),
     }),
     camera: baseCamera({
       distance,
@@ -535,8 +679,15 @@ function reference(t, ctx) {
     }),
     // Third channel (see referenceKeyframes): the screen's corner radius,
     // squared off across the hold that precedes the snap so the final frames
-    // are 100% content, corners included.
-    screen: { cornerScale: clamp01(lerp(a.cornerScale ?? 1, b.cornerScale ?? 1, p)) },
+    // are 100% content, corners included. sheenScale rides the same `fade`
+    // used for the float above (see its own doc comment): the laptop's
+    // glass sheen highlight (glRenderer's setSheenOpacity) is otherwise
+    // visible as a diagonal streak over the user's own screen content once
+    // the ending fills the frame, which would violate 100% content too.
+    screen: {
+      cornerScale: clamp01(lerp(a.cornerScale ?? 1, b.cornerScale ?? 1, p)),
+      sheenScale: fade,
+    },
   }
 }
 
@@ -557,10 +708,10 @@ export const LOOKS = {
  *   `bounds` (see distanceBounds()) resolves symbolic keyframe distances;
  *   omitted, DEFAULT_BOUNDS stands in. `duration` (seconds) also sets the
  *   reference look's snap span, so its ending is equally fast on any clip.
- * @returns {{pose: object, camera: object, screen?: {cornerScale: number}}}
+ * @returns {{pose: object, camera: object, screen?: {cornerScale: number, sheenScale?: number}}}
  *   `screen` is optional — only the reference look drives it (see
  *   referenceKeyframes); a look that omits it leaves the screen's corner
- *   radius alone (cornerScale 1).
+ *   radius alone (cornerScale 1) and the sheen at full strength (sheenScale 1).
  */
 export function lookFrame(name, t, ctx = {}) {
   const look = LOOKS[name] || LOOKS['hero-drift']

@@ -48,6 +48,23 @@ export const FRAME_FINISHES = {
 }
 export const DEFAULT_FRAME_FINISH = 'gold'
 
+// Laptop-only realism pass on the band material (see bandMaterial's own
+// `extra` param): a clearcoat lobe on top of the base metal reflection reads
+// as a lacquered/anodized aluminum edge rather than a flat matte fill, and
+// the boosted envMapIntensity makes the showcase's key/rim lights (see
+// addShowcaseLights) carve out a brighter highlight along the band's own
+// chamfer facets, the curvature cue a flat material can't produce on its
+// own. Phone/tablet/browser never pass `extra` (see buildFlatDevice), so
+// their band material is unaffected.
+const LAPTOP_BAND_PBR_EXTRA = { clearcoat: 0.6, clearcoatRoughness: 0.2, envMapIntensity: 1.35 }
+// The deck's own cap material (buildFrameMesh's capTexture path, laptop-only,
+// no other device passes capTexture) at a touch more metal / less rough
+// than the generic keyboard-tray default, so the palm-rest area around the
+// keys (see composeKeyboardTexture's own gradient background) reads as
+// brushed aluminum instead of matte plastic.
+const LAPTOP_DECK_CAP_METALNESS = 0.35
+const LAPTOP_DECK_CAP_ROUGHNESS = 0.6
+
 /** @returns the FRAME_FINISHES entry for `name`, falling back to the default gold finish for an unknown/missing name. */
 export function resolveFrameFinish(name) {
   return FRAME_FINISHES[name] || FRAME_FINISHES[DEFAULT_FRAME_FINISH]
@@ -1034,6 +1051,11 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   let cornerMeshes = []
   let cornerScale = 1
   let cornerGeometries = []
+  // setSheenOpacity() state: the laptop lid glass's own sheen material (see
+  // buildGlassMesh's `sheen` param), null for every other device. Only
+  // buildLaptopDevice's returned build ever sets it (see render() below).
+  let sheenMaterial = null
+  let sheenOpacity = 1
 
   function ensureRenderer() {
     if (renderer) return
@@ -1067,6 +1089,8 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     cornerGeometries = []
     cornerMeshes = []
     cornerScale = 1
+    sheenMaterial = null
+    sheenOpacity = 1
   }
 
   function track(...items) {
@@ -1085,9 +1109,21 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   // (used for the front/back cap faces, which stay a fixed dark composite
   // color) so the two read as genuinely different materials, not just
   // different colors of the same finish.
-  function bandMaterial(finish) {
+  //
+  // `extra` (default none) merges additional MeshPhysicalMaterial props on
+  // top of the finish's own color/metalness/roughness: used by the laptop
+  // build only (see buildLaptopDevice's own `bandExtra`) for a richer PBR
+  // response (clearcoat, a stronger environment reflection) than the plain
+  // finish alone gives every other device. Omitted, this is byte-for-byte the
+  // same material every other device already gets.
+  function bandMaterial(finish, extra = null) {
     return track(
-      new THREE.MeshPhysicalMaterial({ color: finish.color, metalness: finish.metalness, roughness: finish.roughness })
+      new THREE.MeshPhysicalMaterial({
+        color: finish.color,
+        metalness: finish.metalness,
+        roughness: finish.roughness,
+        ...extra,
+      })
     )
   }
 
@@ -1124,7 +1160,22 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     layout,
     color,
     thickness,
-    { finish = null, frontOffset = thickness / 2, chamfer = 0, capTexture = null } = {}
+    {
+      finish = null,
+      frontOffset = thickness / 2,
+      chamfer = 0,
+      capTexture = null,
+      // capMetalness/capRoughness: only meaningful alongside capTexture (the
+      // keyboard-deck texture; every other caller passes neither). Defaults
+      // preserve the original hardcoded values for any existing capTexture
+      // caller; buildLaptopDevice's own deck call overrides them slightly for
+      // a richer PBR response (see its own call site).
+      capMetalness = 0.1,
+      capRoughness = 0.85,
+      // bandExtra: extra MeshPhysicalMaterial props merged into the band
+      // material on top of `finish` (see bandMaterial's own doc comment).
+      bandExtra = null,
+    } = {}
   ) {
     const width = layout.body.width * UNIT
     const height = layout.body.height * UNIT
@@ -1152,9 +1203,9 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     // below never samples a map.
     if (capTexture) remapShapeUVs(geometry, width, height)
     const capMaterial = capTexture
-      ? track(new THREE.MeshPhysicalMaterial({ map: capTexture, metalness: 0.1, roughness: 0.85 }))
+      ? track(new THREE.MeshPhysicalMaterial({ map: capTexture, metalness: capMetalness, roughness: capRoughness }))
       : bodyMaterial(color)
-    const material = finish ? [capMaterial, bandMaterial(finish)] : capMaterial
+    const material = finish ? [capMaterial, bandMaterial(finish, bandExtra)] : capMaterial
     return new THREE.Mesh(geometry, material)
   }
 
@@ -1335,13 +1386,21 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     return { mesh, ready }
   }
 
-  function buildGlassMesh(layout, glare) {
+  // `sheen` (default false, see buildLaptopDevice's own call site, the only
+  // caller that passes it): layers a subtle diagonal glass highlight onto
+  // this SAME mesh phone/tablet/browser already use via `glare`, independent
+  // of it. `glare` stays off for the whole showcase (see runtime.js's own
+  // comment on the measured black lift a flat, screen-wide veil causes), and
+  // this is deliberately NOT that: buildSheenTexture is transparent almost
+  // everywhere and only brightens a narrow diagonal band, so black content
+  // stays black under it.
+  function buildGlassMesh(layout, glare, { sheen = false } = {}) {
     const geometry = screenGeometry(layout.screen.width * UNIT, layout.screen.height * UNIT, (layout.screen.radius ?? 0) * UNIT)
     const material = track(
       new THREE.MeshPhysicalMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: glare ? 0.18 : 0,
+        opacity: glare ? 0.18 : sheen ? 1 : 0,
         roughness: 0.05,
         metalness: 0,
         clearcoat: 1,
@@ -1349,7 +1408,31 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     )
     const mesh = new THREE.Mesh(geometry, material)
     mesh.position.set(layout.screen.offsetX * UNIT, layout.screen.offsetY * UNIT, 0)
+    if (sheen) {
+      material.map = track(buildSheenTexture(layout.screen.width, layout.screen.height))
+    }
     return mesh
+  }
+
+  // See buildGlassMesh's own `sheen` param. A soft corner-to-corner gradient,
+  // transparent for most of its span and briefly brightening around the
+  // middle: a cheap stand-in for a glass reflection streak, drawn once per
+  // build (not per frame) on an offscreen canvas the same way every other
+  // procedural texture in this file is.
+  function buildSheenTexture(width, height) {
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(2, Math.round(width))
+    canvas.height = Math.max(2, Math.round(height))
+    const ctx = canvas.getContext('2d')
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0)')
+    gradient.addColorStop(0.42, 'rgba(255, 255, 255, 0)')
+    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.07)')
+    gradient.addColorStop(0.58, 'rgba(255, 255, 255, 0)')
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    return new THREE.CanvasTexture(canvas)
   }
 
   function buildShadowPlane(layout) {
@@ -1359,6 +1442,40 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     const mesh = new THREE.Mesh(geometry, material)
     mesh.rotation.x = -Math.PI / 2
     mesh.position.y = -(layout.height * UNIT) / 2 - 0.1
+    return mesh
+  }
+
+  // Laptop-only grounding: buildShadowPlane above sizes/positions its floor
+  // for a FLAT device (shell/body/screen/glass stacked on one Z axis), so its
+  // Y offset (half the device's own flat height) lands well below the
+  // laptop's actual folded-open silhouette (the deck sits at roughly the
+  // hinge's own height, not the bottom of a flat card), and is centered under
+  // the device's X/Z origin rather than under the deck's own forward reach
+  // (see GL_LAPTOP_DECK_DEPTH). Both together leave it effectively invisible
+  // for the laptop (confirmed by rendering, see the reference screenshots),
+  // so the laptop gets its own elliptical contact shadow, positioned directly
+  // under the deck's own footprint instead. Reuses createShadowTexture() (the
+  // same soft radial gradient every device's buildShadowPlane already draws),
+  // no new texture cost.
+  //
+  // Fixed in the scene (not parented under deviceGroup, exactly like
+  // buildShadowPlane): it never moves with the look's own pose, which is
+  // what makes it fade out on its own as the ending approaches. Every beat
+  // from the hold onward only ever pulls the camera IN (fit -> screenFit,
+  // never back out, see referenceKeyframes), and this plane sits outside the
+  // device's own silhouette, so once the frame is tight enough to have
+  // already cropped the device's own edges (screenFit shows content only,
+  // metal band included, cropped) the shadow, always further out than that,
+  // has already left frame too.
+  function buildLaptopContactShadow(layout) {
+    const texture = track(createShadowTexture())
+    const hingeY = -(layout.height * UNIT) / 2 + LAPTOP_BASE_HEIGHT * UNIT
+    const deckDepth = GL_LAPTOP_DECK_DEPTH * UNIT
+    const geometry = track(new THREE.PlaneGeometry(layout.width * UNIT * 1.5, deckDepth * 3.5))
+    const material = track(new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }))
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.set(0, hingeY - deckDepth * 0.1, deckDepth * 0.55)
     return mesh
   }
 
@@ -1527,6 +1644,9 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
       frontOffset: (BODY_THICKNESS * 0.9) / 2,
       chamfer: bandChamfer,
       capTexture: deckTexture,
+      capMetalness: LAPTOP_DECK_CAP_METALNESS,
+      capRoughness: LAPTOP_DECK_CAP_ROUGHNESS,
+      bandExtra: LAPTOP_BAND_PBR_EXTRA,
     })
     const shellLayer = layerGroupFor(shell, 0)
     const bodyLayer = layerGroupFor(body, 1)
@@ -1570,10 +1690,11 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
       finish,
       frontOffset: (BODY_THICKNESS * 0.9) / 2,
       chamfer: bandChamfer,
+      bandExtra: LAPTOP_BAND_PBR_EXTRA,
     })
     const screenBuild = buildScreenMesh(lidScreenLayout, sceneSpec.content, screenPassthroughColor())
     const screen = screenBuild.mesh
-    const glass = buildGlassMesh(lidScreenLayout, sceneSpec.style.glare)
+    const glass = buildGlassMesh(lidScreenLayout, sceneSpec.style.glare, { sheen: true })
     // Position shell/body/screen/glass relative to the lid's own local
     // center, then offset the whole lid group so its pivot (local origin)
     // sits at the hinge line: rotating `lid` therefore rotates about the
@@ -1605,6 +1726,7 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
       lidGroup: lid,
       ready: screenBuild.ready,
       screenMaterial: screenBuild.mesh.material,
+      sheenMaterial: glass.material,
       screenComposeDims: { width: lidScreenLayout.screen.width, height: lidScreenLayout.screen.height },
       cornerMeshes: cornerMeshSpecs([screen, glass], lidScreenLayout.screen),
     }
@@ -1694,10 +1816,14 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     scene.add(deviceGroup)
 
     if (sceneSpec.style.shadow) {
-      scene.add(buildShadowPlane(layout))
+      // See buildLaptopContactShadow's own doc comment for why the laptop
+      // needs its own placement instead of the generic flat-device floor.
+      scene.add(device.name === 'laptop' ? buildLaptopContactShadow(layout) : buildShadowPlane(layout))
     }
 
     screenMaterial = built.screenMaterial
+    sheenMaterial = built.sheenMaterial || null
+    sheenOpacity = 1
     cornerMeshes = built.cornerMeshes || []
     cornerScale = 1
     screenIsBrowserDevice = device.name === 'browser'
@@ -1903,6 +2029,26 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
   }
 
   /**
+   * Per-frame opacity for the laptop lid glass's own sheen highlight (see
+   * buildGlassMesh's `sheen` param): 1 = its current fixed strength, 0 =
+   * none. Every device but the laptop builds no sheen material at all (see
+   * sheenMaterial, set only by buildLaptopDevice's own build), so this is a
+   * no-op there. The showcase's reference look fades this to 0 before its
+   * ending (see looks.js's `reference()`), the same way setScreenCorners
+   * above squares off the corners, so the full-bleed final frames show zero
+   * sheen over the user's own screen content.
+   *
+   * @param {number} scale - 0..1 (clamped; a non-finite value means 1)
+   */
+  function setSheenOpacity(scale) {
+    const next = Math.min(1, Math.max(0, Number.isFinite(scale) ? scale : 1))
+    if (!sheenMaterial || next === sheenOpacity) return
+    sheenOpacity = next
+    sheenMaterial.opacity = next
+    if (renderer && scene && camera) renderer.render(scene, camera)
+  }
+
+  /**
    * Marks the external screen texture dirty and renders one frame — call
    * after drawing a new frame onto the canvas passed to setScreenSource().
    * Safe no-op before setScreenSource()/render() or after destroy().
@@ -1942,5 +2088,5 @@ export function createGlRenderer(containerEl, { pixelSize = null, pixelSizeMode 
     externalScreenTexture = null
   }
 
-  return { render, setPose, setCamera, setScreenSource, setScreenCorners, updateScreen, destroy }
+  return { render, setPose, setCamera, setScreenSource, setScreenCorners, setSheenOpacity, updateScreen, destroy }
 }
