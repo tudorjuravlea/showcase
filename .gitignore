@@ -1,0 +1,48 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Generated runtime bundle (rebuilt by predev/prebuild/pretest hooks)
+src/export/generated/*
+!src/export/generated/.gitkeep
+
+# Generated showcase runtime bundle (built on demand by bin/showcase.mjs --html)
+src/showcase/generated/*
+!src/showcase/generated/.gitkeep
+
+# Showcase CLI output (mockup-showcase-*.mp4/html land in the repo root by default)
+/mockup-showcase-*.mp4
+/mockup-showcase-*.html
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/e2e/.cache/
+
+# Matrix e2e screenshots (human review gate output, not committed)
+/e2e/__screenshots__/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Generated demo outputs
+showcase-output/

@@ -1,0 +1,306 @@
+/* Editor chrome only — the dark/light three-panel tool shell around the
+   device preview. Device rendering itself lives in render/css/device.css
+   and is shared with exported HTML, so none of that lives here, and none of
+   this reads or writes ma-theme — that key only ever affects this file's
+   custom properties via :root[data-theme]. */
+
+:root[data-theme='dark'] {
+  --ma-bg: #0d0e12;
+  --ma-panel-bg: #16171d;
+  --ma-stage-bg: #0a0b0e;
+  --ma-border: #26272f;
+  --ma-fg: #e4e4e8;
+  --ma-fg-muted: #8b8d97;
+  --ma-accent: #6c8dff;
+  --ma-accent-fg: #0d0e12;
+  --ma-warning: #e0a94c;
+  --ma-danger: #e0714c;
+  --ma-control-bg: #1c1e26;
+  --ma-dot: #23252d;
+}
+
+:root[data-theme='light'] {
+  --ma-bg: #eef0f3;
+  --ma-panel-bg: #f7f8fa;
+  --ma-stage-bg: #ffffff;
+  --ma-border: #d8dbe1;
+  --ma-fg: #1c1e26;
+  --ma-fg-muted: #565a66;
+  --ma-accent: #3457d5;
+  --ma-accent-fg: #ffffff;
+  --ma-warning: #8a5a12;
+  --ma-danger: #b03f22;
+  --ma-control-bg: #ffffff;
+  --ma-dot: #dde1e8;
+}
+
+.ma-app {
+  display: flex;
+  height: 100vh;
+  background: var(--ma-bg);
+  color: var(--ma-fg);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.ma-panel-column {
+  width: 280px;
+  flex: none;
+  overflow-y: auto;
+  padding: 20px 18px;
+  background: var(--ma-panel-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ma-panel-column-left {
+  border-right: 1px solid var(--ma-border);
+}
+
+.ma-panel-column-right {
+  border-left: 1px solid var(--ma-border);
+}
+
+.ma-panel h2 {
+  margin: 0 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ma-fg-muted);
+}
+
+.ma-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ma-panel label {
+  display: block;
+  font-size: 12px;
+  color: var(--ma-fg-muted);
+  margin-top: 8px;
+}
+
+.ma-panel label:first-of-type {
+  margin-top: 0;
+}
+
+.ma-panel input[type='checkbox'] {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.ma-panel input[type='range'] {
+  width: 100%;
+  accent-color: var(--ma-accent);
+}
+
+.ma-panel input[type='text'],
+.ma-panel input[type='url'],
+.ma-panel select {
+  width: 100%;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: var(--ma-control-bg);
+  border: 1px solid var(--ma-border);
+  border-radius: 6px;
+  color: var(--ma-fg);
+  font-size: 12px;
+}
+
+.ma-panel input[type='text']:focus,
+.ma-panel input[type='url']:focus,
+.ma-panel select:focus {
+  outline: 2px solid var(--ma-accent);
+  outline-offset: -1px;
+}
+
+.ma-panel input[type='color'] {
+  width: 100%;
+  height: 30px;
+  margin-top: 4px;
+  padding: 2px;
+  background: var(--ma-control-bg);
+  border: 1px solid var(--ma-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ma-panel button {
+  cursor: pointer;
+  background: var(--ma-control-bg);
+  border: 1px solid var(--ma-border);
+  border-radius: 6px;
+  color: var(--ma-fg);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.ma-panel button:hover {
+  border-color: var(--ma-accent);
+}
+
+.ma-content-panel form {
+  margin-top: 4px;
+}
+
+.ma-content-panel form button {
+  margin-top: 6px;
+  width: 100%;
+}
+
+.ma-dropzone {
+  border: 1px dashed var(--ma-border);
+  border-radius: 8px;
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ma-fg-muted);
+  cursor: pointer;
+}
+
+.ma-dropzone:hover {
+  border-color: var(--ma-accent);
+  color: var(--ma-fg);
+}
+
+.ma-toast {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(224, 113, 76, 0.12);
+  border: 1px solid var(--ma-danger);
+  color: var(--ma-danger);
+  font-size: 12px;
+}
+
+.ma-hint {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(224, 169, 76, 0.1);
+  border: 1px solid var(--ma-warning);
+  color: var(--ma-warning);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ma-preset-gallery {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.ma-preset-gallery button {
+  text-align: center;
+  font-size: 11px;
+}
+
+.ma-preset-gallery button[aria-pressed='true'] {
+  border-color: var(--ma-accent);
+  background: var(--ma-accent);
+  color: var(--ma-accent-fg);
+}
+
+.ma-export-panel {
+  margin-top: auto;
+}
+
+.ma-export-btn {
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--ma-accent);
+  color: var(--ma-accent-fg);
+  border: none;
+}
+
+.ma-export-btn:hover {
+  filter: brightness(1.08);
+}
+
+/* Center preview */
+
+.ma-preview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ma-renderer-toggle {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ma-border);
+  background: var(--ma-panel-bg);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 16px;
+  row-gap: 6px;
+}
+
+.ma-toggle-label {
+  font-size: 12px;
+  color: var(--ma-fg);
+  display: inline-flex;
+  align-items: center;
+}
+
+.ma-renderer-notice {
+  margin: 0;
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--ma-warning);
+}
+
+.ma-theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  background: var(--ma-control-bg);
+  border: 1px solid var(--ma-border);
+  border-radius: 6px;
+}
+
+.ma-theme-toggle button {
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--ma-fg-muted);
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.ma-theme-toggle button:hover {
+  color: var(--ma-fg);
+}
+
+.ma-theme-toggle button[aria-pressed='true'] {
+  background: var(--ma-accent);
+  color: var(--ma-accent-fg);
+}
+
+.ma-preview-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  overflow: hidden;
+  background-color: var(--ma-stage-bg);
+  background-image: radial-gradient(var(--ma-dot) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Wraps the renderer-owned device DOM / canvas. Sized to its content
+   (the device's own natural width/height); Preview.jsx scales it down via
+   an inline transform when a device is wider or taller than the space
+   available between the two side panels, so it never bleeds over them. */
+.ma-stage {
+  display: inline-block;
+}

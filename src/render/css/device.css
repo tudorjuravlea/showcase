@@ -1,0 +1,238 @@
+/* CSS 3D device rendering — generic, unbranded device chrome only. */
+
+.ma-device {
+  position: relative;
+  transform-style: preserve-3d;
+}
+
+/* A `filter` forces the element it's set on to flatten its 3D subtree
+   before compositing (per spec, filtered elements paint as one flattened
+   layer) — that broke compound rotations (e.g. a body wall rotated in Y,
+   under the device's own rotateY pose) when the drop-shadow lived directly
+   on .ma-device. Putting it on this separate, untransformed wrapper instead
+   means .ma-device's own 3D scene renders correctly first, and only the
+   already-correct result gets the shadow filter applied on top. */
+.ma-shadow-wrap {
+  display: inline-block;
+  filter: drop-shadow(0 24px 20px rgba(0, 0, 0, 0.25)) drop-shadow(0 40px 60px rgba(0, 0, 0, 0.3));
+}
+
+.ma-layer {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+.ma-shell {
+  overflow: hidden;
+  background: #1c1c1e;
+}
+
+/* .ma-body is a group (not itself a face): buildBodyBox() fills it with a
+   front/back pair + four edge walls so the body reads as a true box, not a
+   flat plane, when rotated. It must NOT clip (overflow: hidden), or the
+   walls/back face — which extend outside the layer's own flat 2D box once
+   rotated in 3D — would get cropped by some browsers' 3D clipping. */
+.ma-body {
+  overflow: visible;
+}
+
+.ma-box-front,
+.ma-box-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.ma-box-front {
+  background: #2c2d30;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Back face darkest per spec §1 "Edge shading". */
+.ma-box-back {
+  background: #17181a;
+}
+
+/* Side walls: darker than the front, lighter than the back — a fixed
+   pseudo-light from above (top wall lightest, bottom darkest, left/right in
+   between) so a rotated device shows real shaded surfaces instead of a
+   paper edge. Each wall is a plain (unrounded) rectangle hinged to rotate
+   from its own screen-facing edge into the box's depth — see buildBodyBox().
+
+   Signs matter: the box's back face sits at translateZ(-thickness), so
+   every wall must extrude toward NEGATIVE Z to join it. The opposite signs
+   fold all four walls out toward the viewer instead, making the box read as
+   2x thickness deep with an uncovered gap behind the front face. */
+.ma-box-wall {
+  position: absolute;
+}
+
+.ma-box-wall-top {
+  top: 0;
+  left: 0;
+  right: 0;
+  transform-origin: top;
+  transform: rotateX(-90deg);
+  background: #2a2b2e;
+}
+
+.ma-box-wall-bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  transform-origin: bottom;
+  transform: rotateX(90deg);
+  background: #1c1d1f;
+}
+
+.ma-box-wall-left {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  transform-origin: left;
+  transform: rotateY(90deg);
+  background: #212226;
+}
+
+.ma-box-wall-right {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  transform-origin: right;
+  transform: rotateY(-90deg);
+  background: #212226;
+}
+
+.ma-screen {
+  overflow: hidden;
+  background: #000;
+}
+
+.ma-glass {
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+
+.ma-content {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: cover;
+}
+
+.ma-glare {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 30%,
+    rgba(255, 255, 255, 0.35) 48%,
+    rgba(255, 255, 255, 0) 62%
+  );
+  mix-blend-mode: screen;
+}
+
+.ma-glow-halo {
+  position: absolute;
+  inset: -14%;
+  box-shadow: 0 0 70px 22px rgba(124, 156, 255, 0.55);
+  pointer-events: none;
+}
+
+.ma-notch {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 80px;
+  height: 18px;
+  border-radius: 12px;
+  background: #000;
+  transform: translateX(-50%);
+}
+
+.ma-browser-chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: #e2e2e4;
+}
+
+.ma-browser-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.ma-browser-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #b8b8bc;
+}
+
+.ma-browser-url {
+  flex: 1;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0 10px;
+  font: 11px/20px system-ui, sans-serif;
+  color: #666;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The keyboard-deck base. Positioned starting exactly at the lid's hinge
+   line (top: dims.height, set inline in cssRenderer.js) and folded flat by
+   a fixed rotateX(90deg) pivoting on its own top edge — the hinge — per
+   spec §1 "flat foreshortened base... extending toward viewer". Sign: CSS
+   Y points down, so the slab's far edge (positive local Y) is carried to
+   POSITIVE Z by a positive rotateX — toward the viewer — and the deck's
+   own front face ends up pointing up. rotateX(-90deg) does the opposite on
+   both counts (deck behind the hinge, facing down). Unlike the lid, this
+   tilt never changes with pose: only the lid opens/closes. */
+.ma-laptop-base {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform-style: preserve-3d;
+  transform-origin: top center;
+  transform: rotateX(90deg);
+}
+
+/* Keyboard-deck texture: faint horizontal rows over the base's own front
+   face (the box-front from buildBodyBox()), suggesting key rows without
+   drawing individual keys. */
+.ma-laptop-base .ma-box-front {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.16) 0,
+    rgba(0, 0, 0, 0.16) 1px,
+    transparent 1px,
+    transparent 13px
+  );
+}
+
+/* Front lip: the base's near edge (its own bottom wall, which ends up
+   closest to the viewer once folded flat) gets a brighter highlight than a
+   plain shaded wall so it reads as a distinct chassis lip. */
+.ma-laptop-base .ma-box-wall-bottom {
+  background: #34363a;
+}
+
+.ma-lid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform-style: preserve-3d;
+  transform-origin: bottom center;
+}

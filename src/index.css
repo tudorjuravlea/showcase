@@ -1,0 +1,29 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* The app's theme is an explicit choice (see src/app/theme.js), so the UA's
+   own color-scheme has to follow it — otherwise native form controls
+   (checkboxes, selects) keep rendering in the OS scheme and a light theme
+   on a dark OS gets dark, misreadable checkboxes. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  /* Themed rather than left to the UA canvas, so there's no light flash
+     behind a dark app shell before .ma-app paints. Falls back to the
+     color-scheme-aware system canvas for the instant before initTheme()
+     stamps data-theme on the root (which is what defines --ma-bg). */
+  background: var(--ma-bg, Canvas);
+}

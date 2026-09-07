@@ -1,0 +1,435 @@
+<!doctype html>
+<!--
+  Fictional weather-app screen, authored from scratch for the README demo GIF.
+  All copy, the app name ("Cloudline"), and iconography are invented for this
+  repo — no third-party app, brand, or asset is used or referenced.
+
+  Self-contained: no external fonts, network requests, or images. Meant to be
+  recorded at exactly 644x1332 (see scripts/README or the recording script)
+  and fed through bin/showcase.mjs as the "screen recording" input.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Cloudline (demo)</title>
+<style>
+  :root {
+    --bg-0: #0a0e14;
+    --bg-1: #121a24;
+    --card: rgba(255, 255, 255, 0.05);
+    --card-border: rgba(255, 255, 255, 0.09);
+    --text-hi: #eef2f6;
+    --text-lo: #8b98a9;
+    --accent-teal: #2dd4bf;
+    --accent-orange: #fb923c;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 644px;
+    height: 1332px;
+    background: var(--bg-0);
+    overflow: hidden;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text-hi);
+  }
+
+  .app {
+    position: relative;
+    width: 644px;
+    height: 1332px;
+    overflow: hidden;
+    background:
+      radial-gradient(120% 60% at 15% -5%, rgba(45, 212, 191, 0.16), transparent 60%),
+      radial-gradient(90% 50% at 100% 10%, rgba(251, 146, 60, 0.10), transparent 60%),
+      linear-gradient(165deg, var(--bg-1), var(--bg-0) 55%);
+  }
+
+  /* Ambient background blob — slow, continuous, purely decorative. */
+  .blob {
+    position: absolute;
+    width: 520px;
+    height: 520px;
+    top: -180px;
+    right: -160px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(45, 212, 191, 0.20), transparent 70%);
+    filter: blur(10px);
+    animation: drift 16s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes drift {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-30px, 40px) scale(1.08); }
+  }
+
+  /* ---------- Status bar ---------- */
+  .status-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 34px 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-hi);
+  }
+  .status-icons { display: flex; align-items: center; gap: 8px; }
+  .signal-bars { display: flex; align-items: flex-end; gap: 3px; height: 12px; }
+  .signal-bars span { width: 4px; background: var(--text-hi); border-radius: 1px; }
+  .signal-bars span:nth-child(1) { height: 40%; }
+  .signal-bars span:nth-child(2) { height: 60%; }
+  .signal-bars span:nth-child(3) { height: 80%; }
+  .signal-bars span:nth-child(4) { height: 100%; }
+  .battery {
+    width: 26px;
+    height: 13px;
+    border: 1.5px solid var(--text-hi);
+    border-radius: 3px;
+    position: relative;
+    padding: 1.5px;
+  }
+  .battery::after {
+    content: "";
+    position: absolute;
+    right: -4px;
+    top: 4px;
+    width: 2.5px;
+    height: 5px;
+    background: var(--text-hi);
+    border-radius: 0 1px 1px 0;
+  }
+  .battery i {
+    display: block;
+    width: 78%;
+    height: 100%;
+    background: var(--text-hi);
+    border-radius: 1px;
+  }
+
+  /* ---------- Header ---------- */
+  .header {
+    position: relative;
+    padding: 34px 34px 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    opacity: 0;
+    transform: translateY(-10px);
+    animation: fadeDown 0.6s cubic-bezier(.16,1,.3,1) 0.15s forwards;
+  }
+  .header h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
+  .header .location {
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-lo);
+    font-size: 15px;
+  }
+  .gear {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ---------- Hero card (TOP region — animates EARLY) ---------- */
+  .hero-card {
+    position: relative;
+    margin: 26px 34px 0;
+    padding: 30px 32px;
+    border-radius: 30px;
+    background: linear-gradient(135deg, #1c5f68 0%, #163a52 60%, #12283b 100%);
+    box-shadow: 0 20px 40px -20px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-36px) scale(0.97);
+    animation: heroIn 0.75s cubic-bezier(.16,1,.3,1) 0.35s forwards;
+  }
+  .hero-card::before {
+    content: "";
+    position: absolute;
+    width: 220px;
+    height: 220px;
+    right: -60px;
+    top: -70px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(45, 212, 191, 0.35), transparent 70%);
+  }
+  .hero-top { display: flex; align-items: center; justify-content: space-between; }
+  .hero-temp { font-size: 74px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+  .hero-desc { margin-top: 8px; font-size: 18px; color: rgba(238, 242, 246, 0.85); }
+  .hero-sub { margin-top: 2px; font-size: 14px; color: rgba(238, 242, 246, 0.55); }
+  .hero-icon { width: 84px; height: 84px; }
+
+  .hero-stats {
+    position: relative;
+    display: flex;
+    gap: 28px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+  }
+  .hero-stat { font-size: 13px; color: rgba(238, 242, 246, 0.6); }
+  .hero-stat b { display: block; font-size: 17px; font-weight: 700; color: var(--text-hi); margin-bottom: 2px; }
+
+  /* ---------- Hourly row (small early flourish) ---------- */
+  .hourly-row {
+    display: flex;
+    gap: 14px;
+    margin: 24px 34px 0;
+    overflow: hidden;
+  }
+  .hour-chip {
+    flex: 1 0 auto;
+    width: 82px;
+    padding: 16px 0;
+    border-radius: 20px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    opacity: 0;
+    transform: translateY(12px);
+    animation: fadeUp 0.5s cubic-bezier(.16,1,.3,1) forwards;
+  }
+  .hour-chip:nth-child(1) { animation-delay: 0.95s; }
+  .hour-chip:nth-child(2) { animation-delay: 1.05s; }
+  .hour-chip:nth-child(3) { animation-delay: 1.15s; }
+  .hour-chip:nth-child(4) { animation-delay: 1.25s; }
+  .hour-chip:nth-child(5) { animation-delay: 1.35s; }
+  .hour-chip .h-time { font-size: 13px; color: var(--text-lo); }
+  .hour-chip .h-temp { font-size: 15px; font-weight: 600; }
+
+  /* ---------- Weekly list (MID region — scrolls MID-timeline) ---------- */
+  .section-title {
+    margin: 30px 34px 12px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-lo);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .week-list {
+    position: relative;
+    margin: 0 34px;
+    height: 268px;
+    overflow: hidden;
+    border-radius: 24px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black 12%, black 88%, transparent);
+            mask-image: linear-gradient(to bottom, transparent, black 12%, black 88%, transparent);
+  }
+  .week-list-inner {
+    animation: weekScroll 3.1s cubic-bezier(.65,0,.35,1) 2.6s 1 forwards;
+  }
+  @keyframes weekScroll {
+    from { transform: translateY(0); }
+    to { transform: translateY(var(--scroll-distance, -201px)); }
+  }
+  .week-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 67px;
+    padding: 0 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .week-row .w-day { width: 100px; font-size: 16px; font-weight: 600; }
+  .week-row .w-icon { width: 30px; height: 30px; }
+  .week-row .w-range { margin-left: auto; font-size: 15px; color: var(--text-lo); }
+  .week-row .w-range b { color: var(--text-hi); font-weight: 600; }
+
+  /* ---------- Bottom card (BOTTOM region — fills LATE) ---------- */
+  .bottom-card {
+    margin: 26px 34px 0;
+    padding: 26px 28px;
+    border-radius: 24px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+  }
+  .bottom-card-top { display: flex; align-items: baseline; justify-content: space-between; }
+  .bottom-card-top .label { font-size: 15px; font-weight: 700; color: var(--text-lo); text-transform: uppercase; letter-spacing: 0.06em; }
+  .bottom-card-top .value { font-size: 15px; color: var(--text-hi); }
+  .bottom-card-top .value b { font-size: 22px; color: var(--accent-orange); }
+  .progress-track {
+    margin-top: 16px;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent-teal), var(--accent-orange));
+  }
+  .bottom-card-caption { margin-top: 10px; font-size: 13px; color: var(--text-lo); }
+
+  /* ---------- Bottom nav ---------- */
+  .bottom-nav {
+    position: absolute;
+    left: 34px;
+    right: 34px;
+    bottom: 30px;
+    height: 76px;
+    border-radius: 26px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--card-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    backdrop-filter: blur(6px);
+  }
+  .nav-item { width: 46px; height: 46px; border-radius: 16px; display: flex; align-items: center; justify-content: center; }
+  .nav-item.active { background: var(--accent-teal); }
+  .nav-item.active svg { stroke: #06231f; }
+  .nav-item svg { stroke: var(--text-lo); }
+
+  @keyframes fadeDown {
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes heroIn {
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="blob"></div>
+
+    <div class="status-bar">
+      <span>9:41</span>
+      <div class="status-icons">
+        <div class="signal-bars"><span></span><span></span><span></span><span></span></div>
+        <div class="battery"><i></i></div>
+      </div>
+    </div>
+
+    <div class="header">
+      <div>
+        <h1>Cloudline</h1>
+        <div class="location">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          <span>Ghent, BE</span>
+        </div>
+      </div>
+      <div class="gear">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#eef2f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+    </div>
+
+    <div class="hero-card">
+      <div class="hero-top">
+        <div>
+          <div class="hero-temp">18°</div>
+          <div class="hero-desc">Partly Cloudy</div>
+          <div class="hero-sub">Feels like 16° · H:20° L:12°</div>
+        </div>
+        <svg class="hero-icon" viewBox="0 0 64 64" fill="none">
+          <circle cx="24" cy="24" r="12" fill="#fbbf24"/>
+          <g stroke="#fbbf24" stroke-width="3" stroke-linecap="round">
+            <line x1="24" y1="4" x2="24" y2="9"/>
+            <line x1="8" y1="24" x2="3" y2="24"/>
+            <line x1="10.5" y1="10.5" x2="7" y2="7"/>
+          </g>
+          <ellipse cx="38" cy="38" rx="20" ry="14" fill="#e2e8f0"/>
+          <ellipse cx="26" cy="42" rx="14" ry="10" fill="#cbd5e1"/>
+        </svg>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat"><b>68%</b>Humidity</div>
+        <div class="hero-stat"><b>12 km/h</b>Wind</div>
+        <div class="hero-stat"><b>4</b>UV Index</div>
+      </div>
+    </div>
+
+    <div class="hourly-row">
+      <div class="hour-chip"><span class="h-time">Now</span><span class="h-temp">18°</span></div>
+      <div class="hour-chip"><span class="h-time">1PM</span><span class="h-temp">19°</span></div>
+      <div class="hour-chip"><span class="h-time">2PM</span><span class="h-temp">20°</span></div>
+      <div class="hour-chip"><span class="h-time">3PM</span><span class="h-temp">19°</span></div>
+      <div class="hour-chip"><span class="h-time">4PM</span><span class="h-temp">17°</span></div>
+    </div>
+
+    <div class="section-title">This Week</div>
+    <div class="week-list">
+      <div class="week-list-inner" id="weekListInner">
+        <div class="week-row"><span class="w-day">Monday</span><span class="w-range">14° / <b>21°</b></span></div>
+        <div class="week-row"><span class="w-day">Tuesday</span><span class="w-range">13° / <b>19°</b></span></div>
+        <div class="week-row"><span class="w-day">Wednesday</span><span class="w-range">12° / <b>18°</b></span></div>
+        <div class="week-row"><span class="w-day">Thursday</span><span class="w-range">15° / <b>22°</b></span></div>
+        <div class="week-row"><span class="w-day">Friday</span><span class="w-range">16° / <b>23°</b></span></div>
+        <div class="week-row"><span class="w-day">Saturday</span><span class="w-range">14° / <b>20°</b></span></div>
+        <div class="week-row"><span class="w-day">Sunday</span><span class="w-range">13° / <b>19°</b></span></div>
+      </div>
+    </div>
+
+    <div class="bottom-card">
+      <div class="bottom-card-top">
+        <span class="label">Air Quality</span>
+        <span class="value"><b id="aqValue">0</b> / 100</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="aqFill"></div></div>
+      <div class="bottom-card-caption" id="aqCaption">Measuring…</div>
+    </div>
+
+    <div class="bottom-nav">
+      <div class="nav-item active"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg></div>
+      <div class="nav-item"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/></svg></div>
+      <div class="nav-item"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.9 2.9M16.2 16.2l2.9 2.9M2 12h4M18 12h4M4.9 19.1l2.9-2.9M16.2 7.8l2.9-2.9"/><circle cx="12" cy="12" r="4"/></svg></div>
+      <div class="nav-item"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
+    </div>
+  </div>
+
+  <script>
+    // Weekly list scroll distance: content height minus the visible window,
+    // computed after layout so the CSS keyframe (weekScroll) lands exactly
+    // on the last row instead of an eyeballed pixel guess.
+    const listInner = document.getElementById('weekListInner');
+    const listContainer = document.querySelector('.week-list');
+    requestAnimationFrame(() => {
+      const distance = listInner.scrollHeight - listContainer.clientHeight;
+      listInner.style.setProperty('--scroll-distance', -distance + 'px');
+    });
+
+    // Air-quality fill + counter, driven by one rAF loop so the number and
+    // the bar stay in lockstep. Starts late (bottom-of-screen motion).
+    const aqFill = document.getElementById('aqFill');
+    const aqValue = document.getElementById('aqValue');
+    const aqCaption = document.getElementById('aqCaption');
+    const AQ_TARGET = 42;
+    const AQ_START_MS = 5500;
+    const AQ_DURATION_MS = 1800;
+    const t0 = performance.now() + AQ_START_MS;
+
+    function tick(now) {
+      if (now < t0) { requestAnimationFrame(tick); return; }
+      const t = Math.min(1, (now - t0) / AQ_DURATION_MS);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const val = Math.round(eased * AQ_TARGET);
+      aqValue.textContent = val;
+      aqFill.style.width = (eased * AQ_TARGET).toFixed(1) + '%';
+      if (t >= 1) aqCaption.textContent = 'Good — updated just now';
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
