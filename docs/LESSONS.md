@@ -118,3 +118,42 @@ what the history alone doesn't teach.
 - **Time-capped choreography must respect the last rendered frame.** A melt
   capped at t=0.985 never completes on a 4s/12fps clip whose final frame
   sits at t=0.98.
+
+## Session 3 additions (2026-09, open-sourcing and the laptop arc)
+
+- **A purge can be content-complete but not doc-complete.** Replacing a
+  private-derived fixture with a synthetic one is half the job; every
+  document that described the old artifact still tells the old story. After
+  swapping any artifact, sweep the docs that reference it and mark them
+  superseded.
+- **"Works headless locally" does not transfer to GitHub-hosted runners for
+  media-readiness paths.** Three specs that pass on a local machine hang
+  identically on both ubuntu and macos runners (hero-page video readiness).
+  The same failure on both runner platforms is what disproved the lazy
+  "it's a Linux thing" explanation. Interim pattern: scope
+  environment-hostile specs with a CI skip plus a public tracking issue
+  stating exact closure criteria, and keep them as required local gates.
+- **Per-device assumptions hide in shared math.** "Frontal pose means
+  frontal screen" held for three devices and silently broke on the fourth,
+  whose screen reclines with the lid. When a rule works by coincidence of
+  geometry, name the assumption in the code so the next device questions it.
+  Fix such things in the renderer layer so choreography stays device-pure.
+- **Missing geometry reads as "fake" before anyone can say why.** The
+  laptop lid had no frame mesh at all (a floating screen above a deck) and
+  reviewers reported it as "separated and fake" without knowing the cause.
+  When a render feels wrong, inventory which physical parts simply do not
+  exist before tuning materials.
+- **Background-pixel scans cannot see veils ON content.** A glass sheen
+  survived into the full-bleed ending and passed the zero-background check,
+  because a streak over content is not background. Ending verification
+  needs a content-fidelity diff (flat-content probe, delta from source) in
+  addition to the background count. A human look at the actual final frame
+  caught what the metric could not.
+- **A deterministic pipeline turns "other devices unaffected" into a
+  checksum.** Byte-identical MP4 hashes before and after each laptop change
+  proved non-regression for phone, tablet, and browser in seconds. Cheap,
+  absolute, and only possible because rendering is seek-driven.
+- **Device-specific choreography can share an ending.** The laptop's
+  enter-and-snap opening lives in its own keyframe set, dispatched by
+  device, while the frontal screen-fill ending stays one shared tail. Split
+  where behavior differs, share where meaning must stay identical.
