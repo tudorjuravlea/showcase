@@ -1,6 +1,6 @@
 ---
 name: showcase
-description: Turn a screen recording or app/prototype export into a cinematic device-mockup video or self-contained hero web page. Use when the user says "showcase this", "make a video of <file/prototype>", asks for a "device mockup video", or drops a screen recording they want presented.
+description: Turn a screen recording or app/prototype export into a cinematic device-mockup video or self-contained hero web page. Use when the user says "showcase this", "make a video of <file/prototype>", asks for a device mockup video, a product demo video, an app preview video, a hero video or hero page, or a phone, tablet, laptop, or browser frame around a recording, or drops a screen recording or screenshot they want presented.
 ---
 
 # Showcase
@@ -27,7 +27,19 @@ activity analysis, rendering); this skill just resolves the input and calls it.
    ```
    Map any user preferences to flags (below); otherwise omit flags and let
    the CLI apply its defaults.
-4. **Send the resulting file to the user** when the command exits 0. All CLI
+4. **Look at frames before you send.** When the command exits 0 and the
+   output is a video, pull three frames and view them. From the repo root:
+   ```
+   FF=$(node -e "import('./scripts/ffmpeg-bin.mjs').then(m=>console.log(m.ffmpegPath))")
+   "$FF" -y -i <out.mp4> -frames:v 1 check-first.png
+   "$FF" -y -ss <half the duration> -i <out.mp4> -frames:v 1 check-mid.png
+   "$FF" -y -sseof -0.1 -i <out.mp4> -frames:v 1 check-last.png
+   ```
+   Check: the right device, content upright and unstretched, and (for the
+   default `reference` look) a final frame that is 100% screen content edge
+   to edge, with no backdrop in the corners. If something looks wrong, fix
+   the flags and rerun instead of sending. Delete the check frames after.
+5. **Send the resulting file to the user.** All CLI
    output goes to **stderr**, both progress and the final
    `showcase: wrote <path>` line; stdout stays empty except for the one-time
    Chromium install's own progress on a first run. Read the path off stderr,
