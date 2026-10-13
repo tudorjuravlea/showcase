@@ -157,3 +157,38 @@ what the history alone doesn't teach.
   enter-and-snap opening lives in its own keyframe set, dispatched by
   device, while the frontal screen-fill ending stays one shared tail. Split
   where behavior differs, share where meaning must stay identical.
+
+## Session 4 additions (2026-10, the ecosystem audit and the gate arc)
+
+- **Replay determinism is not order independence.** The MP4 pipeline only
+  ever seeks forward, so byte-identical renders can coexist with state
+  accidentally kept between frames. The moment a feature seeks arbitrary
+  moments (`--stills`), order independence becomes shipped behavior, so it
+  is now a gate: `e2e/determinism.spec.js` hashes the same probe frames
+  reached seeking forward, seeking backward, and after a jump to the end.
+- **A dry run is the cheap half of verification.** `--check` resolves the
+  whole plan (probe, device, look, duration, sizes, transcode decisions)
+  without rendering, which surfaces intent mismatches (a clamped duration,
+  an overwrite, a transcode) before any time is spent on frames. An agent
+  gates on the plan; a person reads five lines instead of watching a render.
+- **One captioned sheet beats loose frames.** Composing review stills into
+  a single contact sheet (grid plus timestamps) turns "look at the frames"
+  into one glance, for a person or an agent. The composition needs no image
+  library: a second headless page laid out with data URIs, screenshotted.
+- **Borrow semantics, not architecture.** A sibling tool drives whatever
+  browser is installed; adopting that here would silently break the
+  byte-identity doctrine, because the pinned renderer version IS the
+  checksum guarantee. Check every borrowed idea against standing invariants
+  before adopting it.
+- **Audio under a fixed-length picture has one correct ffmpeg shape.** Copy
+  the video stream untouched, fade the track before padding (`afade`, then
+  `apad`), and end at the picture with `-shortest`: a shorter track gets
+  silence, a longer one gets trimmed, and the picture length never changes.
+- **Third-party skills are an install vector.** An ecosystem audit found no
+  malware, but it did find skills that pre-authorize broad tool scopes and
+  instruct piping remote scripts to a shell. Read a skill's frontmatter
+  permissions and install steps the way you would read a dependency's
+  postinstall hook.
+- **Platform metadata is product surface.** The GitHub topic for this whole
+  category sat empty; claiming it cost one command. Check which discovery
+  surfaces exist before assuming the crowded ones are the only ones.
