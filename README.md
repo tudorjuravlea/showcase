@@ -75,6 +75,7 @@ All flags are optional. Omit any of them and the CLI applies the default.
 | `--frame` | `gold` | Device band finish: `gold`, `silver`, `graphite`, or `black`. |
 | `--audio` | none | A finished audio file (wav, mp3, m4a) laid under the video. It is padded or trimmed to the video length and fades out at the end. MP4 output only. |
 | `--stills` | off | A captioned contact sheet (one JPG) instead of a video: a frame count (`--stills 6`) or exact seconds (`--stills 0,2.5,9`). Preview a look before a full render. |
+| `--check` | off | Dry run: print the fully resolved plan (content probe, device, look, duration, sizes, transcode notes) and render nothing. |
 | `--out` | auto-generated | Output file path. |
 | `--html` | off | Export a self-contained animated HTML page instead of a video. |
 | `--contained` | off | Keep the whole device in frame at all times, with no full-bleed close-up. Good for slides and fixed-size embeds. |

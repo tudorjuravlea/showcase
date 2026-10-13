@@ -303,6 +303,29 @@ export function stillTimes(spec, durationSec) {
   return seconds.map((s) => Math.min(STILLS_END_PROGRESS, s / durationSec))
 }
 
+/**
+ * The --check dry run: the fully resolved plan as printable lines, no
+ * rendering. Pure (exported for unit testing); main() prints it to stdout
+ * and exits, so the skill layer can gate on the plan, and on the interface
+ * style it implies, before paying for a render.
+ */
+export function checkReport({ inputPath, kind, probe, device, orientation, look, durationSec, fps, width, height, frame, background, ext, outPath, outExists, stills, audioPath, hdr, willTranscode, contained, durationClamped }) {
+  const lines = [
+    `input: ${inputPath}`,
+    `content: ${kind} ${probe.width}x${probe.height}` + (kind === 'video' ? `, ${probe.durationSec.toFixed(1)}s, codec ${probe.codecName}` : ''),
+    `device: ${device} (${orientation}), frame ${frame}, background ${background ?? 'black (generic)'}`,
+    `look: ${look}, duration ${durationSec}s, ${fps} fps`,
+    `output: ${ext} ${width}x${height} -> ${outPath}` + (outExists ? ' (exists, will be overwritten)' : ''),
+  ]
+  if (contained) lines.push('contained: the whole device stays in frame, no full-bleed close-up')
+  if (stills) lines.push(`stills: ${stills.length} moments (${stills.map((p) => `${(p * durationSec).toFixed(2)}s`).join(', ')})`)
+  if (audioPath) lines.push(`audio: ${audioPath}, padded or trimmed to the video length with an end fade`)
+  if (hdr) lines.push('note: HDR source, it will be converted to BT.709 SDR before rendering')
+  else if (willTranscode) lines.push(`note: codec "${probe.codecName}" may not be browser-playable, a compatible copy will be transcoded first`)
+  if (durationClamped) lines.push(`note: duration clamped to ${durationSec}s (the content is ${probe.durationSec.toFixed(1)}s)`)
+  return lines
+}
+
 // --audio lays a finished track under the rendered picture in one extra
 // ffmpeg pass: video stream copied untouched (the deterministic encode is not
 // re-encoded), audio padded with silence (apad) when shorter than the video
@@ -363,6 +386,8 @@ export function parseArgs(argv) {
       args.html = true
     } else if (token === '--contained') {
       args.contained = true
+    } else if (token === '--check') {
+      args.check = true
     } else if (token in FLAG_KEYS) {
       const value = argv[++i]
       if (value === undefined) throw new Error(`showcase: ${token} needs a value`)
@@ -386,7 +411,7 @@ export function parseArgs(argv) {
   }
 
   if (args._.length !== 1) {
-    throw new Error('Usage: showcase <input> [--device phone|tablet|laptop|browser] [--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise] [--duration N] [--fps N] [--size N] [--frame gold|silver|graphite|black] [--background #hex|cssname (scene backdrop, default black)] [--audio file (a finished track laid under the MP4)] [--stills N|s1,s2,... (a contact sheet of still frames instead of a video)] [--out path] [--html] [--contained (keep the whole device in frame the entire time — for slide/column embeds)]')
+    throw new Error('Usage: showcase <input> [--device phone|tablet|laptop|browser] [--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise] [--duration N] [--fps N] [--size N] [--frame gold|silver|graphite|black] [--background #hex|cssname (scene backdrop, default black)] [--audio file (a finished track laid under the MP4)] [--stills N|s1,s2,... (a contact sheet of still frames instead of a video)] [--check (print the fully resolved plan on stdout and render nothing)] [--out path] [--html] [--contained (keep the whole device in frame the entire time — for slide/column embeds)]')
   }
   args.input = args._[0]
   delete args._
@@ -882,6 +907,22 @@ async function main() {
     // Resolved early so a malformed --stills value fails before any heavy work.
     const stills = args.stills ? stillTimes(args.stills, durationSec) : null
 
+    // Transcode decision, hoisted above the render paths so --check can
+    // report it without doing it (see isBrowserSafeVideo / needsHdrToneMap).
+    const hdr = kind === 'video' && needsHdrToneMap(probe.colorTransfer)
+    const willTranscode = kind === 'video' && (hdr || !isBrowserSafeVideo(inputPath, probe.codecName))
+
+    if (args.check) {
+      const durationClamped = args.duration == null && kind === 'video' && clampAutoDuration(probe.durationSec) !== probe.durationSec
+      const lines = checkReport({
+        inputPath, kind, probe, device, orientation, look, durationSec, fps, width, height, frame,
+        background: args.background || null, ext, outPath, outExists: existsSync(outPath),
+        stills, audioPath, hdr, willTranscode, contained: !!args.contained, durationClamped,
+      })
+      process.stdout.write(lines.join('\n') + '\n')
+      return
+    }
+
     let activity = []
     if (kind === 'video' && look === 'auto-action') {
       process.stderr.write('showcase: analyzing activity...\n')
@@ -910,8 +951,7 @@ async function main() {
     // recording (e.g. an iPhone .mov, HEVC by default) fails to load as-is.
     // Transcode a browser-safe copy first when needed (see isBrowserSafeVideo).
     let contentPath = inputPath
-    const hdr = kind === 'video' && needsHdrToneMap(probe.colorTransfer)
-    if (kind === 'video' && (hdr || !isBrowserSafeVideo(inputPath, probe.codecName))) {
+    if (willTranscode) {
       const why = hdr
         ? `source is HDR (${probe.colorTransfer}) — converting it to BT.709 SDR`
         : `source codec "${probe.codecName}" may not be browser-playable — transcoding a compatible copy`

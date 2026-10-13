@@ -21,13 +21,33 @@ activity analysis, rendering); this skill just resolves the input and calls it.
    `skills/`). If it was installed as a copy, locate the clone or ask the
    user where it is. Run `npm install` there once if `node_modules` is
    missing.
-3. **Run the CLI:**
+3. **Resolve the look before rendering (the pre-render gate).**
+   Dry-run first:
+   ```
+   node bin/showcase.mjs "<input path>" --check [flags]
+   ```
+   It prints the fully resolved plan on stdout (content probe, device,
+   orientation, look, duration, output size and path, transcode notes) and
+   renders nothing. Read it and fix anything that does not match the
+   user's intent before paying for a render.
+   Then take the look from the subject's interface style:
+   - If a design system is available (a connected design-system skill or
+     source, or token and style files in the user's project), use it: set
+     `--background` to the brand's surface or accent color and pick the
+     `--frame` finish that sits closest to the brand's tone.
+   - If none is connected, ask the user for one at the start of the task,
+     in the same message as any input-file question.
+   - If they have none or do not care, fall back to the generic look
+     (black backdrop, gold frame) and say which was used.
+   Never invent brand colors: use only values read from the design system
+   or given by the user.
+4. **Run the CLI:**
    ```
    node bin/showcase.mjs "<input path>" [flags]
    ```
    Map any user preferences to flags (below); otherwise omit flags and let
    the CLI apply its defaults.
-4. **Look at frames before you send.** When the command exits 0 and the
+5. **Look at frames before you send.** When the command exits 0 and the
    output is a video, pull three frames and view them. From the repo root:
    ```
    FF=$(node -e "import('./scripts/ffmpeg-bin.mjs').then(m=>console.log(m.ffmpegPath))")
@@ -39,9 +59,10 @@ activity analysis, rendering); this skill just resolves the input and calls it.
    default `reference` look) a final frame that is 100% screen content edge
    to edge, with no backdrop in the corners. If something looks wrong, fix
    the flags and rerun instead of sending. Delete the check frames after.
-5. **Send the resulting file to the user.** All CLI
+6. **Send the resulting file to the user.** All CLI
    output goes to **stderr**, both progress and the final
-   `showcase: wrote <path>` line; stdout stays empty except for the one-time
+   `showcase: wrote <path>` line; stdout stays empty except for `--check`'s
+   plan and the one-time
    Chromium install's own progress on a first run. Read the path off stderr,
    or pass `--out` yourself and use that path. Mention which
    device/look/duration were used if they weren't explicit, and offer to try
@@ -52,7 +73,7 @@ activity analysis, rendering); this skill just resolves the input and calls it.
 ## Flags
 
 `--device phone|tablet|laptop|browser` `--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise`
-`--duration N` `--fps N` `--size N` `--background #hex|name` `--frame gold|silver|graphite|black` `--audio path` `--stills N|s1,s2` `--out path` `--html` `--contained`
+`--duration N` `--fps N` `--size N` `--background #hex|name` `--frame gold|silver|graphite|black` `--audio path` `--stills N|s1,s2` `--check` `--out path` `--html` `--contained`
 
 `--background` sets the scene backdrop (default: cinematic black). Takes a
 hex value like `#FFCC00` or a CSS color name, and applies to the MP4
@@ -71,7 +92,7 @@ a bare count gives evenly spaced moments (`--stills 6`), comma-separated
 seconds give exact ones (`--stills 0,2.5,9`). It is much faster than a full
 render, so use it to compare looks or check framing before committing to
 the MP4, and to show the user a choice of looks as one image. The frame
-check in step 4 still applies to the final MP4 afterwards.
+check in step 5 still applies to the final MP4 afterwards.
 
 `--contained` keeps the whole device in frame the entire time, with no
 full-bleed close-up ever. Use it for slides, columns, and embeds where the

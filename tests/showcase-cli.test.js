@@ -21,6 +21,7 @@ import {
   AUDIO_FADE_SECONDS,
   stillTimes,
   STILLS_END_PROGRESS,
+  checkReport,
   normalizeActivity,
   parseArgs,
   DEFAULT_DEVICE,
@@ -316,6 +317,38 @@ describe('normalizeActivity', () => {
   })
 })
 
+describe('checkReport', () => {
+  const base = {
+    inputPath: '/in/clip.mp4', kind: 'video',
+    probe: { width: 1080, height: 1920, durationSec: 8, codecName: 'h264', colorTransfer: null },
+    device: 'phone', orientation: 'portrait', look: 'reference', durationSec: 8, fps: 30,
+    width: 1080, height: 2352, frame: 'gold', background: null, ext: 'mp4',
+    outPath: '/out/x.mp4', outExists: false, stills: null, audioPath: null,
+    hdr: false, willTranscode: false, contained: false, durationClamped: false,
+  }
+
+  it('prints the resolved plan, with the generic background named as such', () => {
+    const lines = checkReport(base)
+    expect(lines).toContain('device: phone (portrait), frame gold, background black (generic)')
+    expect(lines).toContain('look: reference, duration 8s, 30 fps')
+    expect(lines).toContain('output: mp4 1080x2352 -> /out/x.mp4')
+    expect(lines.join('\n')).not.toContain('note:')
+  })
+
+  it('adds notes for HDR, overwrite, and a clamped duration', () => {
+    const lines = checkReport({ ...base, hdr: true, outExists: true, durationClamped: true, durationSec: 120, probe: { ...base.probe, durationSec: 300 } })
+    expect(lines.join('\n')).toContain('(exists, will be overwritten)')
+    expect(lines.join('\n')).toContain('HDR source')
+    expect(lines.join('\n')).toContain('duration clamped to 120s (the content is 300.0s)')
+  })
+
+  it('describes stills moments in seconds and the audio treatment', () => {
+    const lines = checkReport({ ...base, stills: [0, 0.5, 0.999], audioPath: '/a/track.wav' }).join('\n')
+    expect(lines).toContain('stills: 3 moments (0.00s, 4.00s, 7.99s)')
+    expect(lines).toContain('audio: /a/track.wav, padded or trimmed')
+  })
+})
+
 describe('stillTimes', () => {
   it('spreads a bare count evenly from the start to the final frame', () => {
     expect(stillTimes('5', 10)).toEqual([0, 0.25, 0.5, 0.75, STILLS_END_PROGRESS])
@@ -391,6 +424,10 @@ describe('parseArgs', () => {
 
   it('rejects --audio combined with --html (the track goes under the MP4 only)', () => {
     expect(() => parseArgs(['clip.mp4', '--audio', 'track.wav', '--html'])).toThrow(/--audio applies to the MP4 export only/)
+  })
+
+  it('parses --check as a boolean flag', () => {
+    expect(parseArgs(['clip.mp4', '--check']).check).toBe(true)
   })
 
   it('parses --stills as a value flag and rejects it combined with --html or --audio', () => {

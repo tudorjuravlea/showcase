@@ -343,3 +343,17 @@ test('--stills renders a captioned contact sheet as one JPG', async ({}, testInf
   expect(sheetW).toBe(4 * 320)
   expect(sheetH).toBe(Math.round((320 * frameH) / frameW) + 28)
 })
+
+// --check is the pre-render gate: it must resolve the full plan and write it
+// to stdout without building, launching a browser, or writing any file.
+// oxlint-disable-next-line no-empty-pattern
+test('--check prints the resolved plan on stdout and renders nothing', async ({}, testInfo) => {
+  test.setTimeout(60_000)
+  const outPath = testInfo.outputPath('never-written.mp4')
+
+  const { stdout } = await runCli([FIXTURE, '--check', '--duration', '6', '--out', outPath], 30_000)
+  expect(stdout).toContain('device: phone (portrait), frame gold, background black (generic)')
+  expect(stdout).toContain('look: reference, duration 6s, 30 fps')
+  expect(stdout).toContain(`-> ${outPath}`)
+  await expect(fs.access(outPath)).rejects.toThrow() // nothing was rendered
+})
