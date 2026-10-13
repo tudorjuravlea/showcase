@@ -273,6 +273,36 @@ export function defaultOutputPath(look, ext) {
   return `mockup-showcase-${look}.${ext}`
 }
 
+// --stills renders a captioned contact sheet (one JPG) instead of a video:
+// the cheap look-before-you-render pass. A bare integer is a frame count
+// (evenly spaced moments); anything else is comma-separated seconds. The
+// returned values are seek() progress in [0, 1); seconds beyond the duration
+// clamp to the final frame rather than failing, matching seek()'s own clamp.
+export const STILLS_MAX = 24
+export const STILLS_END_PROGRESS = 0.999
+
+/**
+ * @param {string|number} spec - the --stills value
+ * @param {number} durationSec - the resolved output duration
+ * @returns {number[]} seek() progress values in [0, 1)
+ */
+export function stillTimes(spec, durationSec) {
+  const text = String(spec)
+  if (/^\d+$/.test(text)) {
+    const n = Number(text)
+    if (n < 2 || n > STILLS_MAX) throw new Error(`showcase: --stills takes 2-${STILLS_MAX} frames, got ${n}`)
+    return Array.from({ length: n }, (_, i) => Math.min(STILLS_END_PROGRESS, i / (n - 1)))
+  }
+  const seconds = text.split(',').map((s) => Number(s))
+  if (!seconds.length || seconds.some((s) => !Number.isFinite(s) || s < 0)) {
+    throw new Error(`showcase: --stills takes a frame count (e.g. 6) or comma-separated seconds (e.g. 0,2.5,9), got "${text}"`)
+  }
+  if (seconds.length > STILLS_MAX) {
+    throw new Error(`showcase: --stills takes at most ${STILLS_MAX} moments, got ${seconds.length}`)
+  }
+  return seconds.map((s) => Math.min(STILLS_END_PROGRESS, s / durationSec))
+}
+
 // --audio lays a finished track under the rendered picture in one extra
 // ffmpeg pass: video stream copied untouched (the deterministic encode is not
 // re-encoded), audio padded with silence (apad) when shorter than the video
@@ -324,7 +354,7 @@ export function normalizeActivity(segmentsSec, durationSec) {
 /** Parses argv (post `node bin/showcase.mjs`) into a flat options object. Throws on bad input. */
 export function parseArgs(argv) {
   const args = { _: [] }
-  const FLAG_KEYS = { '--device': 'device', '--look': 'look', '--out': 'out', '--frame': 'frame', '--background': 'background', '--audio': 'audio' }
+  const FLAG_KEYS = { '--device': 'device', '--look': 'look', '--out': 'out', '--frame': 'frame', '--background': 'background', '--audio': 'audio', '--stills': 'stills' }
   const NUMBER_FLAG_KEYS = { '--duration': 'duration', '--fps': 'fps', '--size': 'size' }
 
   for (let i = 0; i < argv.length; i++) {
@@ -356,7 +386,7 @@ export function parseArgs(argv) {
   }
 
   if (args._.length !== 1) {
-    throw new Error('Usage: showcase <input> [--device phone|tablet|laptop|browser] [--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise] [--duration N] [--fps N] [--size N] [--frame gold|silver|graphite|black] [--background #hex|cssname (scene backdrop, default black)] [--audio file (a finished track laid under the MP4)] [--out path] [--html] [--contained (keep the whole device in frame the entire time — for slide/column embeds)]')
+    throw new Error('Usage: showcase <input> [--device phone|tablet|laptop|browser] [--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise] [--duration N] [--fps N] [--size N] [--frame gold|silver|graphite|black] [--background #hex|cssname (scene backdrop, default black)] [--audio file (a finished track laid under the MP4)] [--stills N|s1,s2,... (a contact sheet of still frames instead of a video)] [--out path] [--html] [--contained (keep the whole device in frame the entire time — for slide/column embeds)]')
   }
   args.input = args._[0]
   delete args._
@@ -385,6 +415,12 @@ export function parseArgs(argv) {
   }
   if (args.audio && args.html) {
     throw new Error('showcase: --audio applies to the MP4 export only — drop --html or the audio flag')
+  }
+  if (args.stills && args.html) {
+    throw new Error('showcase: --stills and --html are different outputs — pass one or the other')
+  }
+  if (args.stills && args.audio) {
+    throw new Error('showcase: --audio applies to the MP4 export only — a contact sheet has no soundtrack')
   }
   return args
 }
@@ -644,6 +680,62 @@ async function runMp4Export({ cfg, inputPath, fps, outPath, root }) {
   }
 }
 
+const STILLS_JPEG_QUALITY = 90
+const SHEET_JPEG_QUALITY = 85
+const SHEET_LABEL_PX = 28
+
+// Renders the chosen moments and composes them into one captioned contact
+// sheet. Same page setup as runMp4Export; the composition happens on a second
+// page (a grid of the captured frames as data URIs) screenshotted whole, so
+// no image library is needed.
+async function runStillsExport({ cfg, inputPath, outPath, root, stills }) {
+  process.stderr.write('showcase: building app (vite build)...\n')
+  await build({ configFile: path.join(root, 'vite.config.js'), logLevel: 'warn' })
+  process.stderr.write('showcase: starting preview server...\n')
+  const server = await preview({ configFile: path.join(root, 'vite.config.js'), preview: { port: 0 }, logLevel: 'warn' })
+  try {
+    const baseUrl = server.resolvedUrls.local[0]
+    const showcaseUrl = new URL('showcase.html', baseUrl).href
+    const contentBuffer = await readFile(inputPath)
+    const contentUrl = `data:${mimeForPath(inputPath, cfg.content.kind)};base64,${contentBuffer.toString('base64')}`
+    const browser = await chromium.launch()
+    try {
+      const page = await browser.newPage({ viewport: { width: cfg.width, height: cfg.height }, deviceScaleFactor: 1 })
+      await page.goto(showcaseUrl)
+      await page.addStyleTag({ content: `body{background:${cfg.background || '#000000'} !important} #stage{position:fixed !important;left:0 !important;top:0 !important;margin:0 !important;transform:none !important}` })
+      await page.evaluate((c) => window.__showcase.init(c), { ...cfg, content: { kind: cfg.content.kind, url: contentUrl } })
+      const canvas = await page.$('#stage canvas')
+      if (!canvas) throw new Error('showcase: no canvas found on the showcase page after init()')
+
+      const frames = []
+      for (let i = 0; i < stills.length; i++) {
+        await page.evaluate((t) => window.__showcase.seek(t), stills[i])
+        frames.push({ jpeg: await canvas.screenshot({ type: 'jpeg', quality: STILLS_JPEG_QUALITY }), seconds: stills[i] * cfg.duration })
+        process.stderr.write(`\rshowcase: still ${i + 1}/${stills.length}`)
+      }
+      process.stderr.write('\n')
+
+      const portrait = cfg.height >= cfg.width
+      const cols = Math.min(frames.length, portrait ? 4 : 3)
+      const cw = portrait ? 320 : 560
+      const ch = Math.round((cw * cfg.height) / cfg.width)
+      const rows = Math.ceil(frames.length / cols)
+      const cells = frames
+        .map((f) => `<figure><img src="data:image/jpeg;base64,${f.jpeg.toString('base64')}"><figcaption>${f.seconds.toFixed(2)}s</figcaption></figure>`)
+        .join('')
+      const sheetHtml = `<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#222;display:grid;grid-template-columns:repeat(${cols},${cw}px);font:600 14px/${SHEET_LABEL_PX}px system-ui,sans-serif;color:#fff}figure{margin:0}img{display:block;width:${cw}px;height:${ch}px}figcaption{height:${SHEET_LABEL_PX}px;padding:0 8px}</style>${cells}`
+      const sheetPage = await browser.newPage({ viewport: { width: cols * cw, height: rows * (ch + SHEET_LABEL_PX) }, deviceScaleFactor: 1 })
+      await sheetPage.setContent(sheetHtml, { waitUntil: 'load' })
+      await sheetPage.waitForFunction(() => [...document.images].every((im) => im.complete))
+      await writeFile(outPath, await sheetPage.screenshot({ type: 'jpeg', quality: SHEET_JPEG_QUALITY }))
+    } finally {
+      await browser.close()
+    }
+  } finally {
+    await server.close()
+  }
+}
+
 const POSTER_JPEG_QUALITY = 80
 
 // Renders a single JPEG poster frame for the --html export's static
@@ -785,8 +877,10 @@ async function main() {
     const size = args.size || DEFAULT_SIZE
     const frame = args.frame || DEFAULT_FRAME
     const { width, height } = outputDimensions(device, orientation, size)
-    const ext = args.html ? 'html' : 'mp4'
+    const ext = args.stills ? 'jpg' : args.html ? 'html' : 'mp4'
     const outPath = path.resolve(args.out || defaultOutputPath(look, ext))
+    // Resolved early so a malformed --stills value fails before any heavy work.
+    const stills = args.stills ? stillTimes(args.stills, durationSec) : null
 
     let activity = []
     if (kind === 'video' && look === 'auto-action') {
@@ -832,7 +926,9 @@ async function main() {
     // as "no poster") — check/install once, up front, so either path gets a
     // clear message instead.
     ensureChromiumInstalled()
-    if (args.html) {
+    if (stills) {
+      await runStillsExport({ cfg, inputPath: contentPath, outPath, root, stills })
+    } else if (args.html) {
       await runHtmlExport({ cfg, inputPath: contentPath, outPath, root })
     } else if (audioPath) {
       // Render the silent picture to a temp file, then lay the track under it.

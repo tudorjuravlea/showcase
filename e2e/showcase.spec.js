@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test, expect, chromium } from '@playwright/test'
+import { outputDimensions } from '../bin/showcase.mjs'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -315,4 +316,30 @@ test.describe('--html export inside a scripts-disabled sandbox', () => {
     const posterShot = await poster.screenshot({ type: 'png' })
     expect(posterShot.length).toBeGreaterThan(NOT_BLACK_BYTES)
   })
+})
+
+// The third output kind (--stills): one smoke, per the design's "ONE e2e
+// smoke per output kind" economy rule. Asserts the sheet is a real JPG whose
+// grid dimensions follow the cell math in bin/showcase.mjs's runStillsExport
+// (4 portrait cells of width 320 in one row, cell height from the phone
+// frame's aspect, plus the 28px caption strip).
+// oxlint-disable-next-line no-empty-pattern
+test('--stills renders a captioned contact sheet as one JPG', async ({}, testInfo) => {
+  test.setTimeout(180_000)
+  const outPath = testInfo.outputPath('sheet.jpg')
+
+  const { stderr } = await runCli([FIXTURE, '--stills', '4', '--duration', '6', '--size', '240', '--out', outPath], 150_000)
+  expect(stderr).toContain(`wrote ${outPath}`)
+
+  const buf = await fs.readFile(outPath)
+  expect([buf[0], buf[1]]).toEqual([0xff, 0xd8]) // JPEG magic bytes
+
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height', '-of', 'csv=p=0', outPath,
+  ])
+  const [sheetW, sheetH] = stdout.trim().split(',').map(Number)
+  const { width: frameW, height: frameH } = outputDimensions('phone', 'portrait', 240)
+  expect(sheetW).toBe(4 * 320)
+  expect(sheetH).toBe(Math.round((320 * frameH) / frameW) + 28)
 })

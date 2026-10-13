@@ -52,7 +52,7 @@ activity analysis, rendering); this skill just resolves the input and calls it.
 ## Flags
 
 `--device phone|tablet|laptop|browser` `--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise`
-`--duration N` `--fps N` `--size N` `--background #hex|name` `--frame gold|silver|graphite|black` `--audio path` `--out path` `--html` `--contained`
+`--duration N` `--fps N` `--size N` `--background #hex|name` `--frame gold|silver|graphite|black` `--audio path` `--stills N|s1,s2` `--out path` `--html` `--contained`
 
 `--background` sets the scene backdrop (default: cinematic black). Takes a
 hex value like `#FFCC00` or a CSS color name, and applies to the MP4
@@ -65,6 +65,13 @@ enforced: duration 1–120, fps 5–60, size 240–2160.
 padded with silence or trimmed to the video length, and fades out at the
 end. It only works for MP4 output, not `--html`. Use it when the
 user supplies music or a voiceover; never pick a track for them unasked.
+
+`--stills` renders a captioned contact sheet (one JPG) instead of a video:
+a bare count gives evenly spaced moments (`--stills 6`), comma-separated
+seconds give exact ones (`--stills 0,2.5,9`). It is much faster than a full
+render, so use it to compare looks or check framing before committing to
+the MP4, and to show the user a choice of looks as one image. The frame
+check in step 4 still applies to the final MP4 afterwards.
 
 `--contained` keeps the whole device in frame the entire time, with no
 full-bleed close-up ever. Use it for slides, columns, and embeds where the

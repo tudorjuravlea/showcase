@@ -19,6 +19,8 @@ import {
   defaultOutputPath,
   audioMuxArgs,
   AUDIO_FADE_SECONDS,
+  stillTimes,
+  STILLS_END_PROGRESS,
   normalizeActivity,
   parseArgs,
   DEFAULT_DEVICE,
@@ -314,6 +316,30 @@ describe('normalizeActivity', () => {
   })
 })
 
+describe('stillTimes', () => {
+  it('spreads a bare count evenly from the start to the final frame', () => {
+    expect(stillTimes('5', 10)).toEqual([0, 0.25, 0.5, 0.75, STILLS_END_PROGRESS])
+  })
+
+  it('converts comma-separated seconds to progress against the duration', () => {
+    expect(stillTimes('0,2.5,9', 10)).toEqual([0, 0.25, 0.9])
+  })
+
+  it('clamps seconds beyond the duration to the final frame instead of failing', () => {
+    expect(stillTimes('12,40', 10)).toEqual([STILLS_END_PROGRESS, STILLS_END_PROGRESS])
+  })
+
+  it('rejects a count outside 2-24', () => {
+    expect(() => stillTimes('1', 10)).toThrow(/takes 2-24 frames/)
+    expect(() => stillTimes('25', 10)).toThrow(/takes 2-24 frames/)
+  })
+
+  it('rejects values that are neither a count nor seconds', () => {
+    expect(() => stillTimes('abc', 10)).toThrow(/frame count .* or comma-separated seconds/)
+    expect(() => stillTimes('-2,5', 10)).toThrow(/frame count .* or comma-separated seconds/)
+  })
+})
+
 describe('audioMuxArgs', () => {
   it('copies the video stream and encodes the track as AAC, trimmed to the picture', () => {
     const args = audioMuxArgs('picture.mp4', 'track.wav', 'out.mp4', 10)
@@ -365,6 +391,12 @@ describe('parseArgs', () => {
 
   it('rejects --audio combined with --html (the track goes under the MP4 only)', () => {
     expect(() => parseArgs(['clip.mp4', '--audio', 'track.wav', '--html'])).toThrow(/--audio applies to the MP4 export only/)
+  })
+
+  it('parses --stills as a value flag and rejects it combined with --html or --audio', () => {
+    expect(parseArgs(['clip.mp4', '--stills', '6']).stills).toBe('6')
+    expect(() => parseArgs(['clip.mp4', '--stills', '6', '--html'])).toThrow(/different outputs/)
+    expect(() => parseArgs(['clip.mp4', '--stills', '6', '--audio', 'a.wav'])).toThrow(/no soundtrack/)
   })
 
   it('rejects a missing input path', () => {
