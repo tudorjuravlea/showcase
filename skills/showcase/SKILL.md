@@ -45,12 +45,14 @@ activity analysis, rendering); this skill just resolves the input and calls it.
    Chromium install's own progress on a first run. Read the path off stderr,
    or pass `--out` yourself and use that path. Mention which
    device/look/duration were used if they weren't explicit, and offer to try
-   a different look or device.
+   a different look or device. Be honest about what you verified: you saw
+   frames, not playback, so invite the user to watch the motion once before
+   they post it.
 
 ## Flags
 
 `--device phone|tablet|laptop|browser` `--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise`
-`--duration N` `--fps N` `--size N` `--background #hex|name` `--frame gold|silver|graphite|black` `--out path` `--html` `--contained`
+`--duration N` `--fps N` `--size N` `--background #hex|name` `--frame gold|silver|graphite|black` `--audio path` `--out path` `--html` `--contained`
 
 `--background` sets the scene backdrop (default: cinematic black). Takes a
 hex value like `#FFCC00` or a CSS color name, and applies to the MP4
@@ -58,6 +60,11 @@ hex value like `#FFCC00` or a CSS color name, and applies to the MP4
 
 `--duration` is plain seconds: `--duration 10`, not `10s`. Ranges are
 enforced: duration 1–120, fps 5–60, size 240–2160.
+
+`--audio` lays a finished track (wav, mp3, m4a) under the MP4. The track is
+padded with silence or trimmed to the video length, and fades out at the
+end. It only works for MP4 output, not `--html`. Use it when the
+user supplies music or a voiceover; never pick a track for them unasked.
 
 `--contained` keeps the whole device in frame the entire time, with no
 full-bleed close-up ever. Use it for slides, columns, and embeds where the

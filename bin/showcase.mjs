@@ -273,6 +273,38 @@ export function defaultOutputPath(look, ext) {
   return `mockup-showcase-${look}.${ext}`
 }
 
+// --audio lays a finished track under the rendered picture in one extra
+// ffmpeg pass: video stream copied untouched (the deterministic encode is not
+// re-encoded), audio padded with silence (apad) when shorter than the video
+// and trimmed at the video's end (-shortest) when longer — and either way it
+// fades out over the final AUDIO_FADE_SECONDS so the ending is never an
+// abrupt cut. afade must run before apad: a fade start past the real audio's
+// end is a no-op, and padded silence needs no fading.
+export const AUDIO_FADE_SECONDS = 0.8
+
+/**
+ * The ffmpeg argv for the audio-mux pass (exported for unit testing).
+ * @returns {string[]}
+ */
+export function audioMuxArgs(picturePath, audioPath, outPath, durationSec) {
+  const fade = Math.min(AUDIO_FADE_SECONDS, durationSec)
+  const start = Math.max(0, durationSec - fade)
+  return [
+    '-v', 'error',
+    '-i', picturePath,
+    '-i', audioPath,
+    '-map', '0:v:0',
+    '-map', '1:a:0',
+    '-c:v', 'copy',
+    '-af', `afade=t=out:st=${start}:d=${fade},apad`,
+    '-c:a', 'aac',
+    '-b:a', '192k',
+    '-shortest',
+    '-movflags', '+faststart',
+    '-y', outPath,
+  ]
+}
+
 /**
  * Clamps activity segments (seconds, from scripts/analyze-activity.mjs) to
  * the output's [0, durationSec] window, dropping degenerate segments.
@@ -292,7 +324,7 @@ export function normalizeActivity(segmentsSec, durationSec) {
 /** Parses argv (post `node bin/showcase.mjs`) into a flat options object. Throws on bad input. */
 export function parseArgs(argv) {
   const args = { _: [] }
-  const FLAG_KEYS = { '--device': 'device', '--look': 'look', '--out': 'out', '--frame': 'frame', '--background': 'background' }
+  const FLAG_KEYS = { '--device': 'device', '--look': 'look', '--out': 'out', '--frame': 'frame', '--background': 'background', '--audio': 'audio' }
   const NUMBER_FLAG_KEYS = { '--duration': 'duration', '--fps': 'fps', '--size': 'size' }
 
   for (let i = 0; i < argv.length; i++) {
@@ -324,7 +356,7 @@ export function parseArgs(argv) {
   }
 
   if (args._.length !== 1) {
-    throw new Error('Usage: showcase <input> [--device phone|tablet|laptop|browser] [--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise] [--duration N] [--fps N] [--size N] [--frame gold|silver|graphite|black] [--background #hex|cssname (scene backdrop, default black)] [--out path] [--html] [--contained (keep the whole device in frame the entire time — for slide/column embeds)]')
+    throw new Error('Usage: showcase <input> [--device phone|tablet|laptop|browser] [--look auto|reference|hero-drift|close-up-pan|orbit-loop|flat-lay-rise|hero-rise] [--duration N] [--fps N] [--size N] [--frame gold|silver|graphite|black] [--background #hex|cssname (scene backdrop, default black)] [--audio file (a finished track laid under the MP4)] [--out path] [--html] [--contained (keep the whole device in frame the entire time — for slide/column embeds)]')
   }
   args.input = args._[0]
   delete args._
@@ -350,6 +382,9 @@ export function parseArgs(argv) {
   if (args.background && /^#[0-9a-fA-F]{3}$/.test(args.background)) {
     const [r, g, b] = args.background.slice(1)
     args.background = `#${r}${r}${g}${g}${b}${b}`
+  }
+  if (args.audio && args.html) {
+    throw new Error('showcase: --audio applies to the MP4 export only — drop --html or the audio flag')
   }
   return args
 }
@@ -445,6 +480,30 @@ async function transcodeForBrowser(inputPath, { hdr = false } = {}) {
     })
   })
   return tmpPath
+}
+
+// Runs the --audio mux pass (see audioMuxArgs for the semantics).
+async function muxAudio(picturePath, audioPath, outPath, durationSec) {
+  await new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, audioMuxArgs(picturePath, audioPath, outPath, durationSec), {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    proc.on('error', (err) => {
+      if (isMissingBinaryError(err)) {
+        reject(new Error('showcase: ffmpeg not found on PATH — install ffmpeg (e.g. `brew install ffmpeg`) and try again.'))
+      } else {
+        reject(err)
+      }
+    })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`showcase: ffmpeg audio mux exited with code ${code}\n${stderr}`))
+    })
+  })
 }
 
 // Escapes "<" so a literal "</script>" arriving through the embedded cfg
@@ -683,22 +742,24 @@ ${posterTag}
 }
 
 async function main() {
-  // The HEVC-transcode temp file must not survive ANY exit path — a failed
-  // probe, a crashed render, or a Ctrl-C mid-encode — so the whole run sits
-  // inside one try/finally with the path in scope, plus a SIGINT hook (which
-  // bypasses `finally` entirely, hence the sync unlink).
-  let transcodedPath = null
-  const cleanupTranscode = () => {
-    if (!transcodedPath) return
-    try {
-      unlinkSync(transcodedPath)
-    } catch {
-      // already gone / never written — nothing to clean up
+  // Temp files (the HEVC-transcode copy, and --audio's silent picture pass)
+  // must not survive ANY exit path — a failed probe, a crashed render, or a
+  // Ctrl-C mid-encode — so the whole run sits inside one try/finally with the
+  // paths in scope, plus a SIGINT hook (which bypasses `finally` entirely,
+  // hence the sync unlink).
+  const tempPaths = new Set()
+  const cleanupTemp = () => {
+    for (const p of tempPaths) {
+      try {
+        unlinkSync(p)
+      } catch {
+        // already gone / never written — nothing to clean up
+      }
     }
-    transcodedPath = null
+    tempPaths.clear()
   }
   process.on('SIGINT', () => {
-    cleanupTranscode()
+    cleanupTemp()
     process.exit(130)
   })
 
@@ -706,6 +767,10 @@ async function main() {
     const args = parseArgs(process.argv.slice(2))
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
     const inputPath = path.resolve(args.input)
+    const audioPath = args.audio ? path.resolve(args.audio) : null
+    if (audioPath && !existsSync(audioPath)) {
+      throw new Error(`showcase: no audio file at ${audioPath}`)
+    }
 
     process.stderr.write(`showcase: ffmpeg -> ${ffmpegPath}${ffmpegPath === 'ffmpeg' ? ' (PATH)' : ' (bundled)'}\n`)
     process.stderr.write(`showcase: ffprobe -> ${ffprobePath}${ffprobePath === 'ffprobe' ? ' (PATH)' : ' (bundled)'}\n`)
@@ -757,8 +822,8 @@ async function main() {
         ? `source is HDR (${probe.colorTransfer}) — converting it to BT.709 SDR`
         : `source codec "${probe.codecName}" may not be browser-playable — transcoding a compatible copy`
       process.stderr.write(`showcase: ${why}...\n`)
-      transcodedPath = await transcodeForBrowser(inputPath, { hdr })
-      contentPath = transcodedPath
+      contentPath = await transcodeForBrowser(inputPath, { hdr })
+      tempPaths.add(contentPath)
     }
 
     // Both export paths eventually call chromium.launch() (runMp4Export
@@ -769,12 +834,19 @@ async function main() {
     ensureChromiumInstalled()
     if (args.html) {
       await runHtmlExport({ cfg, inputPath: contentPath, outPath, root })
+    } else if (audioPath) {
+      // Render the silent picture to a temp file, then lay the track under it.
+      const picturePath = path.join(os.tmpdir(), `showcase-picture-${randomUUID()}.mp4`)
+      tempPaths.add(picturePath)
+      await runMp4Export({ cfg, inputPath: contentPath, fps, outPath: picturePath, root })
+      process.stderr.write('showcase: laying the audio track under the picture...\n')
+      await muxAudio(picturePath, audioPath, outPath, durationSec)
     } else {
       await runMp4Export({ cfg, inputPath: contentPath, fps, outPath, root })
     }
     process.stderr.write(`showcase: wrote ${outPath}\n`)
   } finally {
-    cleanupTranscode()
+    cleanupTemp()
   }
 }
 

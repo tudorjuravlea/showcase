@@ -17,6 +17,8 @@ import {
   outputDimensions,
   outputFrameTimes,
   defaultOutputPath,
+  audioMuxArgs,
+  AUDIO_FADE_SECONDS,
   normalizeActivity,
   parseArgs,
   DEFAULT_DEVICE,
@@ -312,6 +314,28 @@ describe('normalizeActivity', () => {
   })
 })
 
+describe('audioMuxArgs', () => {
+  it('copies the video stream and encodes the track as AAC, trimmed to the picture', () => {
+    const args = audioMuxArgs('picture.mp4', 'track.wav', 'out.mp4', 10)
+    expect(args).toContain('picture.mp4')
+    expect(args).toContain('track.wav')
+    expect(args[args.length - 1]).toBe('out.mp4')
+    expect(args.join(' ')).toContain('-map 0:v:0 -map 1:a:0 -c:v copy')
+    expect(args.join(' ')).toContain('-c:a aac')
+    expect(args).toContain('-shortest')
+  })
+
+  it('fades the track out over the final AUDIO_FADE_SECONDS, then pads', () => {
+    const args = audioMuxArgs('p.mp4', 'a.wav', 'o.mp4', 10)
+    expect(args[args.indexOf('-af') + 1]).toBe(`afade=t=out:st=${10 - AUDIO_FADE_SECONDS}:d=${AUDIO_FADE_SECONDS},apad`)
+  })
+
+  it('never puts the fade start below zero on a clip shorter than the fade', () => {
+    const args = audioMuxArgs('p.mp4', 'a.wav', 'o.mp4', 0.5)
+    expect(args[args.indexOf('-af') + 1]).toBe('afade=t=out:st=0:d=0.5,apad')
+  })
+})
+
 describe('parseArgs', () => {
   it('parses a bare input path with all defaults', () => {
     const args = parseArgs(['clip.mp4'])
@@ -333,6 +357,14 @@ describe('parseArgs', () => {
   it('parses --contained as a boolean flag', () => {
     const args = parseArgs(['clip.mp4', '--contained'])
     expect(args.contained).toBe(true)
+  })
+
+  it('parses --audio as a path flag', () => {
+    expect(parseArgs(['clip.mp4', '--audio', 'track.wav']).audio).toBe('track.wav')
+  })
+
+  it('rejects --audio combined with --html (the track goes under the MP4 only)', () => {
+    expect(() => parseArgs(['clip.mp4', '--audio', 'track.wav', '--html'])).toThrow(/--audio applies to the MP4 export only/)
   })
 
   it('rejects a missing input path', () => {
